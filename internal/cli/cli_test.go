@@ -711,6 +711,59 @@ func TestAnthropicIsARegisteredProvider(t *testing.T) {
 	}
 }
 
+func readFileString(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
+}
+
+func TestInitReportLanguageFollowsTheSiteLanguage(t *testing.T) {
+	h := newHarness(t)
+
+	// An operator who sets the answer language expects the report in the same
+	// language; the report was silently English before. A fresh file is used so an
+	// existing [report] language (which init must not overwrite) is out of the way.
+	first := filepath.Join(h.dir, "ja.toml")
+	code, _, stderr := h.run("init", "--non-interactive", "--skip-db", "--out", first,
+		"--site-id", "demo", "--own-domain", "example.shop", "--language", "ja")
+	if code != ExitOK {
+		t.Fatalf("init = %d: %s", code, stderr)
+	}
+	saved := readFileString(t, first)
+	if !strings.Contains(saved, "[report]\nlanguage = \"ja\"") {
+		t.Fatalf("the report language must follow --language ja:\n%s", saved)
+	}
+
+	// It can still be set on its own.
+	second := filepath.Join(h.dir, "en-report.toml")
+	code, _, stderr = h.run("init", "--non-interactive", "--skip-db", "--out", second,
+		"--site-id", "demo", "--own-domain", "example.shop", "--language", "ja",
+		"--report-language", "en")
+	if code != ExitOK {
+		t.Fatalf("init = %d: %s", code, stderr)
+	}
+	saved = readFileString(t, second)
+	if !strings.Contains(saved, "[report]\nlanguage = \"en\"") {
+		t.Fatalf("--report-language en must win:\n%s", saved)
+	}
+
+	// An unsupported report language is a configuration error, not a silent English
+	// report.
+	third := filepath.Join(h.dir, "fr.toml")
+	code, _, stderr = h.run("init", "--non-interactive", "--skip-db", "--out", third,
+		"--site-id", "demo", "--own-domain", "example.shop", "--language", "ja",
+		"--report-language", "fr")
+	if code != ExitConfig {
+		t.Fatalf("exit = %d, want %d for an unsupported report language: %s", code, ExitConfig, stderr)
+	}
+	if !strings.Contains(stderr, "report language") {
+		t.Errorf("the error should name the setting: %s", stderr)
+	}
+}
+
 func TestVersionListsTheProvidersAndVersions(t *testing.T) {
 	h := newHarness(t)
 

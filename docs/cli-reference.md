@@ -38,7 +38,8 @@ Reasons are stable strings: `config_incomplete`, `config_invalid`, `auth_missing
 
 ```
 aicm init [--non-interactive] [--site-id ID] [--site-name NAME] [--own-domain HOST]
-          [--market ja-JP] [--language ja] [--brand-terms A,B] [--competitors D1,D2]
+          [--market ja-JP] [--language ja] [--report-language en|ja]
+          [--brand-terms A,B] [--competitors D1,D2]
           [--db-path PATH] [--report-dir DIR] [--out FILE] [--force] [--skip-db]
 ```
 
@@ -46,6 +47,11 @@ Writes the configuration and creates the project row. Interactive when stdin is 
 terminal and `--non-interactive` is absent. A configuration file is never
 overwritten without `--force`. Only the flags you actually pass override an
 existing configuration.
+
+`[report] language` follows `--language` unless `--report-language` says
+otherwise: an operator who measures in Japanese expects the report in Japanese.
+The CLI and its help stay English either way. A language other than `en` or `ja`
+is a configuration error (exit 2), not a silent English report.
 
 ## questions
 

@@ -14,7 +14,7 @@ import (
 // cannot be turned off.
 const (
 	SampleStatementEN = "> **These numbers are measurements of a sample.** An AI service does not expose its whole answer log, so every citation rate and mention rate here is the observation of \"this question set, this model, this many runs\". They do not represent the consumer ChatGPT / Gemini UI or every user's answer.\n"
-	SampleStatementJA = "> **これは標本についての測定です。** AI サービスの全回答ログは取得できないため、ここに出る引用率・言言率は「この質問セットを・このモデルで・この回数実行した」範囲の観測です。ChatGPT / Gemini の一般向け画面や全ユーザーの結果を代表しません。\n"
+	SampleStatementJA = "> **これは標本についての測定です。** AI サービスの全回答ログは取得できないため、ここに出る引用率・言及率は「この質問セットを・このモデルで・この回数実行した」範囲の観測です。ChatGPT / Gemini の一般向け画面や全ユーザーの結果を代表しません。\n"
 )
 
 // Options carry the report-time rules and labels.

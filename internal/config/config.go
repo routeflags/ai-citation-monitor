@@ -176,8 +176,15 @@ func (c *Config) ApplyDefaults() {
 	if c.Limits.MaxRetries == 0 {
 		c.Limits.MaxRetries = DefaultMaxRetries
 	}
+	// The report language follows the site language unless [report] language says
+	// otherwise: an operator who sets --language ja expects Japanese numbers, not
+	// an English report that disagrees with the question set.
 	if c.Report.Language == "" {
-		c.Report.Language = "en"
+		if c.Language != "" {
+			c.Report.Language = c.Language
+		} else {
+			c.Report.Language = "en"
+		}
 	}
 	if c.Providers.OpenAI.APIKeyEnv == "" {
 		c.Providers.OpenAI.APIKeyEnv = "OPENAI_API_KEY"
@@ -236,6 +243,13 @@ func (c *Config) Problems() []string {
 	}
 	if strings.TrimSpace(c.Market) == "" {
 		problems = append(problems, "market is empty (the same question in another market is a different measurement)")
+	}
+	switch c.Report.Language {
+	case "", "en", "ja":
+	default:
+		problems = append(problems, fmt.Sprintf(
+			"report language %q is not supported; use \"en\" or \"ja\" (or drop [report] language to follow the site language %q)",
+			c.Report.Language, c.Language))
 	}
 	return problems
 }

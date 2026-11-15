@@ -24,6 +24,7 @@ type initOptions struct {
 	ownDomain      string
 	market         string
 	language       string
+	reportLanguage string
 	brandTerms     []string
 	competitors    []string
 	dbPath         string
@@ -53,6 +54,7 @@ environment variable that carries the key (for example OPENAI_API_KEY).`,
 	flags.StringVar(&opts.ownDomain, "own-domain", "", "your domain, host only (for example example.shop)")
 	flags.StringVar(&opts.market, "market", config.DefaultMarket, "target market (for example ja-JP)")
 	flags.StringVar(&opts.language, "language", config.DefaultLanguage, "answer language")
+	flags.StringVar(&opts.reportLanguage, "report-language", "", "language of the generated report (default: the site language)")
 	flags.StringSliceVar(&opts.brandTerms, "brand-terms", nil, "brand terms used for the mention rate")
 	flags.StringSliceVar(&opts.competitors, "competitors", nil, "competitor domains to measure against")
 	flags.StringVar(&opts.dbPath, "db-path", config.DefaultDBPath, "database path")
@@ -106,6 +108,9 @@ func (a *App) runInit(cmd *cobra.Command, opts initOptions) error {
 	}
 	if cmd.Flags().Changed("language") {
 		cfg.Language = opts.language
+	}
+	if cmd.Flags().Changed("report-language") {
+		cfg.Report.Language = opts.reportLanguage
 	}
 	if len(opts.brandTerms) > 0 {
 		cfg.BrandTerms = opts.brandTerms
