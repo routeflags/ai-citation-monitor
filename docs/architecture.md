@@ -99,6 +99,12 @@ plan_key = sha256(project, question, question_version, provider, model,
                   repeat_index, stage, session)
 ```
 
+**Two hashes look alike and are not.** `question_versions.version` is a short,
+prefixed identity (`sha:<12 hex>`) because it names a version in reports;
+`responses.answer_sha256` is the full 64-character hex of the answer text with no
+prefix, because it is compared byte for byte by `aicm verify`. Storing one in the
+other's place makes a correct answer look edited.
+
 The second constraint is why a recorded *failure* is not resent in the same
 session: the condition already has its row. `aicm run` reports those calls and
 points at `--session`, which is how a retry becomes a new condition.
