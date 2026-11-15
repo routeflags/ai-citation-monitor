@@ -1,0 +1,51 @@
+name: Feature request
+
+about: A capability the tool does not have
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Phase 1 is deliberately narrow: CLI only, no web UI, no server, no
+        scheduled runs, no cost/budget feature. Requests that add one of those
+        need to argue why the scope should change.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you unable to measure or decide today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+    validations:
+      required: true
+
+  - type: textarea
+    id: invariants
+    attributes:
+      label: Effect on the measurement rules
+      description: |
+        Say how this keeps the invariants: rates carry `n`, `n = 0` is not 0%,
+        no totals across provider/model/stage, append-only records, citations
+        only from provider metadata.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - providers (a new AI service)
+        - metrics / report
+        - CLI / configuration
+        - storage / export
+        - documentation
+        - other
+    validations:
+      required: true

@@ -152,19 +152,18 @@ func (c *Client) Ask(ctx context.Context, req providers.Request) (providers.Resu
 	return finish(), nil
 }
 
-func (c *Client) mapTransportError(ctx context.Context, result *providers.Result, err error) error {
+func (c *Client) mapTransportError(ctx context.Context, result *providers.Result, err error) {
 	if ctx.Err() != nil {
 		result.Status = providers.StatusCancelled
 		result.ErrorKind = providers.ErrorKindCancelled
 		result.ErrorCode = "cancelled"
 		result.ErrorMessage = ctx.Err().Error()
-		return nil
+		return
 	}
 	result.Status = providers.StatusError
 	result.ErrorKind = providers.ErrorKindTransport
 	result.ErrorCode = "transport_error"
 	result.ErrorMessage = err.Error()
-	return nil
 }
 
 type responsePayload struct {

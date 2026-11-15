@@ -48,6 +48,33 @@ jobs:
         if: runner.os == 'Linux'
         run: go test -race ./...
 
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.15.0
+
+  vuln:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      # Only reachable vulnerabilities fail the job. A finding here means the Go
+      # toolchain or a dependency needs a patch release, not a code change.
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
   goreleaser-check:
     name: goreleaser config
     runs-on: ubuntu-latest

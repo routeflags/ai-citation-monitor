@@ -158,8 +158,7 @@ const (
 // Build groups runs and citations. It never aggregates across groups.
 func Build(runs []sqlite.Run, citations []sqlite.CitationRow, opts Options) []Group {
 	type acc struct {
-		runs      []sqlite.Run
-		citations []sqlite.CitationRow
+		runs []sqlite.Run
 	}
 	buckets := map[string]*acc{}
 	order := []string{}
@@ -337,7 +336,7 @@ func buildDomains(citations []sqlite.CitationRow, judgedRuns []sqlite.Run, opts 
 	})
 	shares := make([]DomainShare, 0, len(names))
 	for _, name := range names {
-		classification := "other"
+		var classification string
 		if name != "(no host)" {
 			classification = domain.ClassifyDomain(name, opts.OwnDomain, opts.Subdomains, opts.Competitors)
 		} else {

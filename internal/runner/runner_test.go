@@ -13,11 +13,10 @@ import (
 
 // fakeProvider needs no network: it returns a fixed result.
 type fakeProvider struct {
-	name    string
-	calls   atomic.Int32
-	result  providers.Result
-	delay   time.Duration
-	blockOn *atomic.Bool
+	name   string
+	calls  atomic.Int32
+	result providers.Result
+	delay  time.Duration
 }
 
 func (f *fakeProvider) Name() string            { return f.name }

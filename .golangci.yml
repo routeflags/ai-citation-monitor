@@ -1,0 +1,33 @@
+version: "2"
+
+# Deliberately small. go vet is in the standard pipeline already; these are the
+# linters that catch what a measurement tool cannot afford to get wrong: an
+# ignored error, an ineffective assignment, dead code.
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+  settings:
+    errcheck:
+      # Closing and printing are not recoverable here: the operation is already
+      # done, and failing a run because stderr was closed would hide the result.
+      exclude-functions:
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.Tx).Rollback
+        - (*github.com/routeflags/ai-citation-monitor/internal/storage/sqlite.DB).Close
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (net/http.ResponseWriter).Write
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

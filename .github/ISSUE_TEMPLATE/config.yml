@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security problem
+    url: https://github.com/routeflags/ai-citation-monitor/security/advisories/new
+    about: Report a leaked credential or a falsifiable record privately, not in an issue.
+  - name: How the numbers are defined
+    url: https://github.com/routeflags/ai-citation-monitor/blob/main/docs/metrics.md
+    about: Numerator, denominator and the rules every rate follows.
+  - name: How a change is reviewed
+    url: https://github.com/routeflags/ai-citation-monitor/blob/main/CONTRIBUTING.md
+    about: The invariants a pull request must keep true.

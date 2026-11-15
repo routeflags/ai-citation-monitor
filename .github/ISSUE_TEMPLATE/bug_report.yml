@@ -1,0 +1,70 @@
+name: Bug report
+
+about: Something broken or a number that looks wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Never paste an API key, a Bearer token or the
+        contents of `.env`.** If you include a database row or an exported line,
+        check that it carries no credential value.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw, and why it is wrong.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: input
+    id: command
+    attributes:
+      label: Command
+      description: The exact command you ran (remove any secret argument).
+      placeholder: aicm run --provider openai --stage smoke --repeat 1
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: stdout/stderr, or the report line that shows the problem.
+      render: text
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `aicm version`.
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS and architecture
+      placeholder: macOS 15 arm64 / Ubuntu 24.04 amd64 / Windows 11 amd64
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I removed every credential value from what I pasted.
+          required: true
+        - label: This is not a security issue (those go through SECURITY.md).
+          required: true

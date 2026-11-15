@@ -8,7 +8,6 @@ package export
 import (
 	"encoding/csv"
 	"encoding/json"
-	"fmt"
 	"io"
 	"strconv"
 
@@ -207,11 +206,4 @@ func optionalInt(value *int) string {
 		return ""
 	}
 	return strconv.Itoa(*value)
-}
-
-func optionalFloat(value *float64) string {
-	if value == nil {
-		return ""
-	}
-	return fmt.Sprintf("%.6f", *value)
 }

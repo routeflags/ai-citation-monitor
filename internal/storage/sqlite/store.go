@@ -342,13 +342,6 @@ func (d *DB) InsertRun(ctx context.Context, w RunWrite) (runID int64, inserted b
 	return runID, true, nil
 }
 
-func defaultString(value, fallback string) string {
-	if strings.TrimSpace(value) == "" {
-		return fallback
-	}
-	return value
-}
-
 // RunFilter narrows a run query. StartUTC is inclusive, EndUTC exclusive.
 type RunFilter struct {
 	StartUTC string

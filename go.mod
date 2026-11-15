@@ -1,6 +1,6 @@
 module github.com/routeflags/ai-citation-monitor
 
-go 1.26.5
+go 1.26.11
 
 require (
 	github.com/BurntSushi/toml v1.6.0
