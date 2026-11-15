@@ -2,7 +2,8 @@
 
 `routeflags/seo-operations` の `scripts/geo/` を独立ツール化した `aicm` が v0.1.1 で公開された。
 この文書は、seo-operations 側に移行を判断する人（またはエージェント）へ渡すための要点。
-**seo-operations は変更していない。** 移行の判断・実施はそちら側の仕事。
+**seo-operations のコードは変更していない。** 移行の判断・実施はそちら側の仕事。
+追跡 issue: https://github.com/routeflags/seo-operations/issues/11（2026-11-15 起票、判断待ちの項目つき）
 
 ## 確認済みの事実
 
