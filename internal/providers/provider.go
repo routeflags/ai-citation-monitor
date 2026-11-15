@@ -47,6 +47,10 @@ type Citation struct {
 	Title      string
 	StartIndex *int
 	EndIndex   *int
+	// SourceHost is the host a provider reports next to an opaque citation URL
+	// (Gemini's grounding chunks point at a redirect and name the real site in the
+	// chunk). Empty when the URL is the page itself.
+	SourceHost string
 }
 
 // Usage carries the numbers the provider reported. Nil means "not reported".

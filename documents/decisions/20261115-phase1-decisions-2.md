@@ -130,3 +130,40 @@
   見える。**改善案**: 失敗のみで構成された計画のときに exit 4（`api_failure`）を返す。
   ただし「直したのに失敗扱い」という逆の誤解を生むため、現時点では注記に留めた。
 - 判断してほしいこと: 上記の exit code 変更を行うか、それとも現行（注記のみ）でよいか。
+
+---
+
+## D15. Gemini の grounding chunk は「リダイレクト + 引用元の名前」
+
+**オーナー判断（2026-11-15、live 観測で発見）**: 実 Gemini API の応答では
+`candidates[].groundingMetadata.groundingChunks[].web.uri` が
+`https://vertexaisearch.cloud.google.com/grounding-api-redirect/...` という**不透明な
+リダイレクト**で、実際の引用元は同じ chunk の `web.title`（例 `go.dev`）に入っている。
+URI のホストをそのまま採用すると、Gemini の全引用が Google のリダイレクトホストになり、
+`cited_own` が決して 1 にならない（＝ Gemini の GEO 引用率・競合シェアが常に 0）。
+
+### 決定
+
+- アダプターは chunk の `web.domain`（あれば）→ `web.title`（ホスト名の形のときだけ）を
+  `Citation.SourceHost` として運ぶ。`web.title` が文（`Go 1.27 release notes`）なら hint に
+  しない（誤ってドメインとして扱わない）。
+- `domain.NormalizeCitationInputs` は hint があれば **hostname を hint** にし、
+  `normalized_url` と `dedupe_key` は**生の URL のまま**（リダイレクトは正規化できない）。
+  `malformed` にはしない。
+- 記録には provider が返した URL と、provider が意図した引用元の両方が残る。
+- `NormalizerVersion` を **2 → 3** に上げる（`cited_own` の意味が変わるため）。
+- 対象は Gemini のみ。OpenAI / Anthropic の citation URL は実ページを指すので hint は空。
+
+### 検証
+
+- live（`gemini-3.1-pro-preview`、2026-11-15）: 3 引用のうち `go.dev` が `is_own=1`、
+  `cited_own=1`、`brand_mentioned=1`。修正前は同じ条件で `cited_own=0`（全て
+  `vertexaisearch.cloud.google.com`）。
+- 回帰テスト: `TestAskKeepsTheRealSiteBehindAGroundingRedirect`（adapter）と
+  `TestCitationSourceHostHint`（domain）。
+
+### 制限
+
+- `web.title` がホスト名でない（例 `Go Blog`）場合、その chunk はリダイレクトホストのまま
+  記録される。実測では主要な chunk はホスト名だったが、保証ではない。
+- `competitors` の判定も同じ hint を使うため、同じ制限を受ける。

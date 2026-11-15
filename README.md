@@ -20,12 +20,12 @@ proves it. Nothing claims to have been measured against a live API.
 | Area | State |
 |---|---|
 | `init` / `questions add,list,import` / `run --dry-run` / `report` / `compare` / `trends` / `export` / `verify` | **Verified** by `go test ./...` (offline) |
-| OpenAI adapter (Responses API + `web_search`) | **Implemented, not verified against the live API.** Request/response shapes come from the published documentation and from captured responses used as reference; the tests serve those shapes from `httptest` |
-| Gemini adapter (`generateContent` + `google_search`) | **Implemented, not verified against the live API.** Same caveat |
-| Anthropic adapter (Messages API + `web_search_20250305`) | **Implemented, not verified against the live API.** Request and citation shapes come from the published documentation; the tests serve those shapes from `httptest`. `max_tokens` defaults to 8192 and a cut-off answer is recorded as an error |
+| OpenAI adapter (Responses API + `web_search`) | **Observed once against the live API** (2026-11-15, `gpt-6.1-sol`): annotations as citations, usage, and a real 401. One model, one question: not a statement about other models |
+| Gemini adapter (`generateContent` + `google_search`) | **Observed once against the live API** (2026-11-15, `gemini-3.1-pro-preview`): grounding chunks arrive as opaque redirects and the real site comes from the chunk, which the adapter records as a hint |
+| Anthropic adapter (Messages API + `web_search_20250305`) | **Observed once against the live API** (2026-11-15, `claude-sonnet-5-5`): text-block citations, usage, `web_search` tool call. `max_tokens` defaults to 8192; a cut-off answer is recorded as an error |
 | Citation extraction from provider metadata | **Verified** with fixtures for cited / not-cited / error / empty / no-metadata responses |
 | Retry (429 / 502 / 503 / 504, `Retry-After`), rate limit, concurrency, Ctrl+C resume | **Verified** by unit tests |
-| Live measurement of any provider | **Not done.** It spends money and needs a credential, so it only happens with an explicit owner decision |
+| A real measurement programme (a full question set for a live site) | **Not done.** The three live runs above were one question each; a production run spends money and is an owner decision |
 
 ## What it measures
 

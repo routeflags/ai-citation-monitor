@@ -266,11 +266,14 @@ func (r *Runner) executeOne(ctx context.Context, item Item) oneResult {
 }
 
 func (r *Runner) buildWrite(item Item, result providers.Result) sqlite.RunWrite {
-	rawURLs := make([]string, 0, len(result.Citations))
+	inputs := make([]domain.CitationInput, 0, len(result.Citations))
 	for _, citation := range result.Citations {
-		rawURLs = append(rawURLs, citation.RawURL)
+		// A provider may point at an opaque redirect and name the real site
+		// alongside it (Gemini); the hint travels with the citation so the
+		// site a run counted is the provider's answer, not the redirect.
+		inputs = append(inputs, domain.CitationInput{URL: citation.RawURL, SourceHost: citation.SourceHost})
 	}
-	details := domain.NormalizeCitationDetails(rawURLs, r.OwnDomain, r.Subdomains)
+	details := domain.NormalizeCitationInputs(inputs, r.OwnDomain, r.Subdomains)
 	citations := make([]sqlite.CitationWrite, 0, len(details))
 	citedOwn := false
 	for _, detail := range details {

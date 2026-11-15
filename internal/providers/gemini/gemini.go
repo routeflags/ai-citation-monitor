@@ -217,8 +217,9 @@ type groundingMetadata struct {
 	WebSearchQueries []string `json:"webSearchQueries"`
 	GroundingChunks  []struct {
 		Web *struct {
-			URI   string `json:"uri"`
-			Title string `json:"title"`
+			URI    string `json:"uri"`
+			Title  string `json:"title"`
+			Domain string `json:"domain"`
 		} `json:"web"`
 	} `json:"groundingChunks"`
 }
@@ -262,7 +263,11 @@ func (p *responsePayload) citations() ([]providers.Citation, string) {
 			if chunk.Web == nil || chunk.Web.URI == "" {
 				continue
 			}
-			citations = append(citations, providers.Citation{RawURL: chunk.Web.URI, Title: chunk.Web.Title})
+			citation := providers.Citation{RawURL: chunk.Web.URI, Title: chunk.Web.Title}
+			if hint := sourceHost(chunk.Web.URI, chunk.Web.Domain, chunk.Web.Title); hint != "" {
+				citation.SourceHost = hint
+			}
+			citations = append(citations, citation)
 		}
 	}
 	if len(p.Candidates) == 0 {
@@ -329,4 +334,42 @@ func truncate(value string) string {
 		return value[:300] + "..."
 	}
 	return value
+}
+
+// groundingRedirectHost is the host Gemini uses for the opaque redirect that a
+// grounding chunk points at. The real source is the chunk's domain/title, not the
+// URL: recording the redirect as the cited host would make every citation look
+// like Google and no site could ever be "cited".
+const groundingRedirectHost = "vertexaisearch.cloud.google.com"
+
+// sourceHost returns the site a grounding chunk refers to, or "" when the URI is
+// the page itself. It prefers the chunk's own domain field and falls back to the
+// title when the title is a bare host name ("go.dev"), never a sentence.
+func sourceHost(uri, domain, title string) string {
+	if isGroundingRedirect(uri) {
+		if host := strings.TrimSpace(domain); host != "" {
+			return host
+		}
+		return strings.TrimSpace(title)
+	}
+	if strings.TrimSpace(domain) != "" && !hostOf(uri, strings.TrimSpace(domain)) {
+		return strings.TrimSpace(domain)
+	}
+	return ""
+}
+
+func isGroundingRedirect(uri string) bool {
+	parsed, err := url.Parse(uri)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(parsed.Hostname(), groundingRedirectHost)
+}
+
+func hostOf(uri, host string) bool {
+	parsed, err := url.Parse(uri)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(parsed.Hostname(), host)
 }

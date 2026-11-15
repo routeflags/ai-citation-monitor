@@ -17,9 +17,9 @@ English: [README.md](README.md).
 | 領域 | 状態 |
 |---|---|
 | `init` / `questions add,list,import` / `run --dry-run` / `report` / `compare` / `trends` / `export` / `verify` | **検証済み**（`go test ./...`、オフライン） |
-| OpenAI アダプター（Responses API + `web_search`） | **実装済み・実 API 未検証**。形は公開ドキュメントと、採取済み応答の構造を写した fixture に基づく。テストは `httptest` |
-| Gemini アダプター（`generateContent` + `google_search`） | **実装済み・実 API 未検証**。同上 |
-| Anthropic アダプター（Messages API + `web_search_20250305`） | **実装済み・実 API 未検証**。リクエストと引用の形は公開ドキュメントに基づき、テストはその形を `httptest` で配信する。`max_tokens` の既定は 8192 で、打ち切られた回答はエラーとして記録する |
+| OpenAI アダプター（Responses API + `web_search`） | **live で 1 回観測済み**（2026-11-15、`gpt-6.1-sol`）。引用 annotation・usage・実 401 を確認。1 モデル 1 問の観測であり、他のモデルの保証ではない |
+| Gemini アダプター（`generateContent` + `google_search`） | **live で 1 回観測済み**（2026-11-15、`gemini-3.1-pro-preview`）。grounding の chunk は不透明なリダイレクトで、実際の引用元は chunk 側の値。アダプターはそれを hint として記録する |
+| Anthropic アダプター（Messages API + `web_search_20250305`） | **live で 1 回観測済み**（2026-11-15、`claude-sonnet-5-5`）。text ブロックの citations・usage・web_search 呼び出しを確認。`max_tokens` の既定は 8192 で、打ち切られた回答はエラーとして記録する |
 | 引用メタデータからの抽出 | **検証済み**（cited / not-cited / error / empty / メタデータなし の fixture） |
 | リトライ（429/502/503/504・`Retry-After`）・レート制限・並列・Ctrl+C 再開 | **検証済み**（単体テスト） |
 | 実 API での計測 | **行っていない**。課金と認証が必要なため、オーナーの明示判断があるときだけ行う |

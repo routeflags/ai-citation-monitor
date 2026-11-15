@@ -4,11 +4,12 @@ The tool speaks to the provider APIs directly with `net/http`. No SDK is used, s
 the request shape and the API version are visible in the code and are recorded in
 every measurement.
 
-> **Live API status: not verified.** The adapters are implemented from the
-> published documentation and validated against fixtures that copy the shape of
-> captured provider responses, served by `httptest`. Nobody has spent money on a
-> live call from this repository yet, so the first live run is an owner decision,
-> not a test.
+> **Live API status: observed once per provider** (2026-11-15). Each adapter has
+> been run against the real service with one question and one model — OpenAI
+> `gpt-6.1-sol`, Gemini `gemini-3.1-pro-preview`, Anthropic `claude-sonnet-5-5` —
+> and the citation/usage extraction matched. That is one observation, not a
+> supported-model list: CI never calls a provider, and the tests serve documented
+> response shapes from `httptest`.
 
 ## OpenAI
 
@@ -53,6 +54,14 @@ Notes:
   speaks `generateContent`, which is what the recorded endpoint version says. When
   that changes, the version string changes with it so old and new measurements are
   not mixed.
+- **A grounding chunk's `uri` is often an opaque redirect.** A live answer returns
+  `https://vertexaisearch.cloud.google.com/grounding-api-redirect/...` and names
+  the real site in the chunk (`web.domain`, else `web.title`, e.g. `go.dev`). The
+  adapter carries that name as the citation's source host, so the record keeps the
+  URL the provider gave and the site the provider meant; without it every Gemini
+  citation would look like Google and `cited_own` could never be true
+  (`NormalizerVersion` 3). A title that is a sentence rather than a bare host is
+  ignored, and the URL is read as usual.
 - A blocked prompt (`promptFeedback.blockReason`) is recorded as an error
   (`error_code = blocked`), not as a zero-citation answer.
 

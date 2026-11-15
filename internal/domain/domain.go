@@ -23,7 +23,10 @@ import (
 //
 // 2: hosts are compared in punycode, so a Unicode citation and its ACE form are
 // one population (1 compared the raw host).
-const NormalizerVersion = "2"
+// 3: a provider may name the real site next to an opaque citation URL (Gemini's
+// grounding redirect). Without the hint every Gemini citation was Google's
+// redirect host, so cited_own could never be true for that provider.
+const NormalizerVersion = "3"
 
 // Citation is one cited URL of a run, after normalisation. Position is 1-based
 // and counts after duplicate folding. Domain is nil when the URL has no usable
@@ -157,20 +160,58 @@ type CitationDetail struct {
 	Domain        *string
 	IsOwn         bool
 	Malformed     bool
+	// SourceHost is the host the provider reported alongside an opaque citation
+	// URL, when it did (Gemini's grounding chunks carry a redirect URL and the
+	// real source in the title). Empty means "derive it from the URL".
+	SourceHost string
 }
 
-// NormalizeCitationDetails folds duplicates and numbers the citations from 1,
-// keeping both the raw URL and the normalised form.
+// CitationInput is one raw citation as a provider reported it.
+type CitationInput struct {
+	URL string
+	// SourceHost is the provider's own hint about where the URL points, used only
+	// when the URL itself is not the page (a grounding redirect).
+	SourceHost string
+}
+
+// NormalizeCitationInputs folds duplicates and numbers the citations from 1.
 //
-// normalized_url is the canonical identity of the page (scheme://host/path): the
-// query and the fragment are what make the same page look like two citations. A
-// malformed URL has no canonical form, so normalized_url is empty and malformed is
-// true; it is still recorded.
-func NormalizeCitationDetails(rawURLs []string, ownDomain string, subdomains bool) []CitationDetail {
-	details := make([]CitationDetail, 0, len(rawURLs))
-	seen := make(map[string]bool, len(rawURLs))
-	for _, raw := range rawURLs {
-		info := SplitCitationURL(raw)
+// A citation whose URL is opaque (a provider redirect) but which carries a host
+// hint keeps the raw URL and is classified by the hint: hostname is the hinted
+// host, normalized_url is the raw URL (nothing about the redirect can be
+// canonicalised), and the dedupe key is the raw URL. Without the hint every
+// Gemini citation would look like vertexaisearch.cloud.google.com and no site
+// could ever be "cited".
+func NormalizeCitationInputs(inputs []CitationInput, ownDomain string, subdomains bool) []CitationDetail {
+	details := make([]CitationDetail, 0, len(inputs))
+	seen := make(map[string]bool, len(inputs))
+	for _, input := range inputs {
+		hint := CanonicalHost(input.SourceHost)
+		if hint != "" && !looksLikeHost(hint) {
+			hint = ""
+		}
+		if hint != "" {
+			raw := strings.TrimSpace(input.URL)
+			if raw == "" {
+				continue
+			}
+			if seen[raw] {
+				continue
+			}
+			seen[raw] = true
+			domainValue := hint
+			details = append(details, CitationDetail{
+				Position:      len(details) + 1,
+				RawURL:        raw,
+				NormalizedURL: raw,
+				DedupeKey:     raw,
+				Domain:        &domainValue,
+				IsOwn:         IsOwnDomain(domainValue, ownDomain, subdomains),
+				SourceHost:    hint,
+			})
+			continue
+		}
+		info := SplitCitationURL(input.URL)
 		if info.URL == "" && info.DedupeKey == "" {
 			continue
 		}
@@ -197,8 +238,38 @@ func NormalizeCitationDetails(rawURLs []string, ownDomain string, subdomains boo
 	return details
 }
 
-// NormalizeCitations folds duplicates and numbers the citations from 1.
-// Empty URLs are not citations and are skipped (they must not inflate counts).
+// looksLikeHost rejects a title that happens to contain a dot but is a sentence
+// ("Go 1.27 release"), so a provider's display title is never mistaken for a
+// domain.
+func looksLikeHost(value string) bool {
+	if !strings.Contains(value, ".") {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// NormalizeCitationDetails folds duplicates and numbers the citations from 1,
+// keeping both the raw URL and the normalised form.
+//
+// normalized_url is the canonical identity of the page (scheme://host/path): the
+// query and the fragment are what make the same page look like two citations. A
+// malformed URL has no canonical form, so normalized_url is empty and malformed is
+// true; it is still recorded.
+func NormalizeCitationDetails(rawURLs []string, ownDomain string, subdomains bool) []CitationDetail {
+	inputs := make([]CitationInput, 0, len(rawURLs))
+	for _, raw := range rawURLs {
+		inputs = append(inputs, CitationInput{URL: raw})
+	}
+	return NormalizeCitationInputs(inputs, ownDomain, subdomains)
+}
+
 func NormalizeCitations(rawURLs []string, ownDomain string, subdomains bool) []Citation {
 	details := NormalizeCitationDetails(rawURLs, ownDomain, subdomains)
 	citations := make([]Citation, 0, len(details))

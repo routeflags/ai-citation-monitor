@@ -102,6 +102,38 @@ func TestAskWithoutGroundingMetadataIsUnknown(t *testing.T) {
 	}
 }
 
+func TestAskKeepsTheRealSiteBehindAGroundingRedirect(t *testing.T) {
+	// Live Gemini answers point the grounding chunk at an opaque redirect and name
+	// the site in the chunk. The adapter must carry that name as a hint, or every
+	// citation would be vertexaisearch.cloud.google.com and no site could ever be
+	// "cited".
+	body := `{"candidates":[{"content":{"parts":[{"text":"Go 1.27.4 is the latest stable release."}]},
+		"groundingMetadata":{"webSearchQueries":["go release"],"groundingChunks":[
+		{"web":{"uri":"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQH","title":"go.dev"}},
+		{"web":{"uri":"https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQJ","title":"reddit.com"}}]}}]}`
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(body))
+	})
+	client := newTestClient(t, handler)
+	result, _ := client.Ask(context.Background(), providers.Request{QuestionText: "q", Model: "gemini-test"})
+	if result.Status != providers.StatusSuccess {
+		t.Fatalf("status = %s (%s)", result.Status, result.ErrorMessage)
+	}
+	if len(result.Citations) != 2 {
+		t.Fatalf("citations = %d, want 2", len(result.Citations))
+	}
+	if result.Citations[0].SourceHost != "go.dev" {
+		t.Errorf("source host = %q, want go.dev (the chunk names the site)", result.Citations[0].SourceHost)
+	}
+	if result.Citations[0].RawURL == result.Citations[0].SourceHost {
+		t.Error("the raw URL must stay the URL the provider returned")
+	}
+	if result.Citations[1].SourceHost != "reddit.com" {
+		t.Errorf("source host = %q, want reddit.com", result.Citations[1].SourceHost)
+	}
+}
+
 func TestAskEmptyGroundingChunksIsObservedZero(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

@@ -202,6 +202,51 @@ func TestBrandTermMatchesOnWordBoundaries(t *testing.T) {
 	}
 }
 
+func TestCitationSourceHostHint(t *testing.T) {
+	// Gemini's grounding chunks point at an opaque redirect and name the real site
+	// beside it. Without the hint every citation would be vertexaisearch.google
+	// and no site could ever be "cited".
+	details := NormalizeCitationInputs([]CitationInput{{
+		URL:        "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQ==",
+		SourceHost: "go.dev",
+	}}, "go.dev", true)
+	if len(details) != 1 {
+		t.Fatalf("details = %d, want 1", len(details))
+	}
+	detail := details[0]
+	if detail.Domain == nil || *detail.Domain != "go.dev" {
+		t.Fatalf("domain = %v, want the hinted host", detail.Domain)
+	}
+	if !detail.IsOwn {
+		t.Error("a hinted own host must count as own")
+	}
+	if detail.NormalizedURL != detail.RawURL {
+		t.Errorf("normalised = %q, want the raw redirect (nothing there to canonicalise)", detail.NormalizedURL)
+	}
+	if detail.Malformed {
+		t.Error("a hint replaces the opaque URL, it does not make it malformed")
+	}
+
+	// A display title that is a sentence is not a host, so the hint is ignored and
+	// the URL is read as usual.
+	details = NormalizeCitationInputs([]CitationInput{{
+		URL:        "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQ==",
+		SourceHost: "Go 1.27 release notes",
+	}}, "go.dev", true)
+	if details[0].Domain == nil || *details[0].Domain != "vertexaisearch.cloud.google.com" {
+		t.Errorf("domain = %v, want the URL host when the hint is not a host", details[0].Domain)
+	}
+
+	// The same hint-vs-URL rule folds duplicates by the raw URL.
+	details = NormalizeCitationInputs([]CitationInput{
+		{URL: "https://r.example/a", SourceHost: "go.dev"},
+		{URL: "https://r.example/a", SourceHost: "go.dev"},
+	}, "go.dev", true)
+	if len(details) != 1 {
+		t.Errorf("details = %d, want 1 (the same opaque URL is one citation)", len(details))
+	}
+}
+
 func TestClassifyDomain(t *testing.T) {
 	competitors := []string{"rival.example"}
 	if got := ClassifyDomain("www.example.shop", "example.shop", true, competitors); got != "own" {
