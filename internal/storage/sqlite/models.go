@@ -61,10 +61,13 @@ type Run struct {
 
 // ResponseRow is the stored answer plus usage snapshot.
 type ResponseRow struct {
-	RunID                 int64
-	AnswerText            string
-	AnswerSHA256          string
-	RawResponseJSON       string
+	RunID           int64
+	AnswerText      string
+	AnswerSHA256    string
+	RawResponseJSON string
+	// BodyStored is false when the run was recorded hash-only: the empty text is a
+	// choice, not a lost answer.
+	BodyStored            bool
 	CitationObservability string
 	ErrorCode             string
 	ErrorMessage          string
@@ -165,11 +168,13 @@ type RunWrite struct {
 	AnswerText            string
 	AnswerSHA256          string
 	RawResponseJSON       string
-	ErrorCode             string
-	ErrorMessage          string
-	Citations             []CitationWrite
-	Mentions              []MentionWrite
-	Usage                 UsageWrite
+	// HashOnlyBody writes the hash and nothing else (no answer text, no raw JSON).
+	HashOnlyBody bool
+	ErrorCode    string
+	ErrorMessage string
+	Citations    []CitationWrite
+	Mentions     []MentionWrite
+	Usage        UsageWrite
 }
 
 // Counts is the cheap overview used by `aicm verify` and status output.

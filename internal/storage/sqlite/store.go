@@ -277,12 +277,19 @@ func (d *DB) InsertRun(ctx context.Context, w RunWrite) (runID int64, inserted b
 		return 0, false, err
 	}
 
+	answerText, rawJSON, bodyStored := w.AnswerText, w.RawResponseJSON, 1
+	if w.HashOnlyBody {
+		// The body is deliberately not kept (C1 contract O20): the hash proves what
+		// was measured without storing it.
+		answerText, rawJSON, bodyStored = "", "", 0
+	}
 	responseResult, err := tx.ExecContext(ctx, `
 		INSERT INTO responses (
-			run_id, answer_text, answer_sha256, raw_response_json, citation_observability,
-			error_code, error_message, input_tokens, output_tokens, tool_usage, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		runID, w.AnswerText, w.AnswerSHA256, w.RawResponseJSON, w.CitationObservability,
+			run_id, answer_text, answer_sha256, raw_response_json, body_stored,
+			citation_observability, error_code, error_message, input_tokens, output_tokens,
+			tool_usage, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		runID, answerText, w.AnswerSHA256, rawJSON, bodyStored, w.CitationObservability,
 		w.ErrorCode, w.ErrorMessage, w.Usage.InputTokens, w.Usage.OutputTokens,
 		"", now,
 	)
@@ -437,8 +444,9 @@ func nullInt(value sql.NullInt64) *int {
 
 // Responses reads response rows for the given runs (all runs when ids is empty).
 func (d *DB) Responses(ctx context.Context, runIDs []int64) ([]ResponseRow, error) {
-	sqlText := `SELECT run_id, answer_text, answer_sha256, raw_response_json, citation_observability,
-		error_code, error_message, input_tokens, output_tokens, tool_usage FROM responses`
+	sqlText := `SELECT run_id, answer_text, answer_sha256, raw_response_json, body_stored,
+		citation_observability, error_code, error_message, input_tokens, output_tokens,
+		tool_usage FROM responses`
 	args := []any{}
 	if len(runIDs) > 0 {
 		sqlText += ` WHERE run_id IN (` + placeholders(len(runIDs)) + `)`
@@ -456,11 +464,13 @@ func (d *DB) Responses(ctx context.Context, runIDs []int64) ([]ResponseRow, erro
 	for rows.Next() {
 		var r ResponseRow
 		var inputTokens, outputTokens sql.NullInt64
+		var bodyStored int
 		if err := rows.Scan(&r.RunID, &r.AnswerText, &r.AnswerSHA256, &r.RawResponseJSON,
-			&r.CitationObservability, &r.ErrorCode, &r.ErrorMessage, &inputTokens,
-			&outputTokens, &r.ToolUsage); err != nil {
+			&bodyStored, &r.CitationObservability, &r.ErrorCode, &r.ErrorMessage,
+			&inputTokens, &outputTokens, &r.ToolUsage); err != nil {
 			return nil, err
 		}
+		r.BodyStored = bodyStored == 1
 		r.InputTokens = nullInt(inputTokens)
 		r.OutputTokens = nullInt(outputTokens)
 		responses = append(responses, r)

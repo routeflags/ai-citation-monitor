@@ -213,3 +213,35 @@ func TestIntegrityRepairSequence(t *testing.T) {
 		t.Fatalf("the repaired run must be consistent, got %v", got)
 	}
 }
+
+// TestHashOnlyBodyKeepsTheHashNotTheText covers the C1 contract's O20: a database
+// that is committed must not carry the answer text. The hash stays, the empty text
+// is a choice (body_stored = 0), and verify must not call it a lost answer.
+func TestHashOnlyBodyKeepsTheHashNotTheText(t *testing.T) {
+	db, _ := newVerifyDB(t)
+	project, question := seedProject(t, db)
+	write := sampleWrite(project, question, "key-hash-only", "gpt-test")
+	write.HashOnlyBody = true
+
+	runID, inserted, err := db.InsertRun(context.Background(), write)
+	if err != nil || !inserted {
+		t.Fatalf("InsertRun: inserted=%v err=%v", inserted, err)
+	}
+	responses, err := db.Responses(context.Background(), []int64{runID})
+	if err != nil || len(responses) != 1 {
+		t.Fatalf("Responses: %d rows, err=%v", len(responses), err)
+	}
+	response := responses[0]
+	if response.AnswerText != "" || response.RawResponseJSON != "" {
+		t.Errorf("the body must not be stored: text=%q raw=%q", response.AnswerText, response.RawResponseJSON)
+	}
+	if response.BodyStored {
+		t.Error("body_stored must be 0 for a hash-only row")
+	}
+	if response.AnswerSHA256 == "" {
+		t.Error("the answer hash must still be recorded")
+	}
+	if got := issueKinds(t, db); len(got) != 0 {
+		t.Fatalf("a hash-only run is consistent, got %v", got)
+	}
+}

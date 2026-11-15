@@ -69,6 +69,10 @@ type Runner struct {
 	QuestionSetSHA256  string
 	Logf               func(format string, args ...any)
 	Now                func() time.Time
+
+	// HashOnlyBody writes the answer hash and nothing else (C1 contract O20: the
+	// answer is not kept in a Git-tracked database).
+	HashOnlyBody bool
 }
 
 func planKey(projectID int64, question sqlite.Question, provider, model string, repeat int, stage, session string) string {
@@ -350,6 +354,7 @@ func (r *Runner) buildWrite(item Item, result providers.Result) sqlite.RunWrite 
 		ToolVersion:           ToolVersion(),
 		AnswerText:            result.AnswerText,
 		AnswerSHA256:          sha256Hex(result.AnswerText),
+		HashOnlyBody:          r.HashOnlyBody,
 		RawResponseJSON:       string(result.RawJSON),
 		ErrorCode:             result.ErrorCode,
 		ErrorMessage:          result.ErrorMessage,

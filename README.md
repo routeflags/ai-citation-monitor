@@ -132,6 +132,9 @@ a script can tell "no credential" from "bad config" without parsing text.
 - The answer text and the provider's raw JSON are stored, so a citation can be
   re-checked later. Credential values are never written: the adapters redact them
   from error messages and from the stored raw JSON.
+- `store_answer_body = false` (or `run --store hash-only`) keeps only the answer
+  hash. Use it when the database is committed: the rates do not change, `verify`
+  knows the empty body is deliberate, and the text can no longer be re-checked.
 - A call is recorded even when it fails. A resumed run skips the calls already
   recorded (same question version, provider, model, repeat, stage and session),
   so a Ctrl+C never pays twice.

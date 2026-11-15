@@ -85,6 +85,10 @@ type Config struct {
 	ReportDir   string   `toml:"report_dir"`
 	BrandTerms  []string `toml:"brand_terms"`
 	Competitors []string `toml:"competitors"`
+	// StoreAnswerBody keeps the answer text and the raw JSON in the database. When
+	// false, only the answer hash is written (the C1 contract's O20: the answer is
+	// not kept in a Git-tracked database). Nil means "not set": keep the body.
+	StoreAnswerBody *bool `toml:"store_answer_body"`
 
 	Report    ReportSettings `toml:"report"`
 	Providers Providers      `toml:"providers"`
@@ -92,6 +96,11 @@ type Config struct {
 
 	// Path is the file this config came from ("" when it was not found).
 	Path string `toml:"-"`
+}
+
+// HasAnswerBody reports whether the answer text and the raw JSON are stored.
+func (c *Config) HasAnswerBody() bool {
+	return c.StoreAnswerBody == nil || *c.StoreAnswerBody
 }
 
 // HasSubdomains reports whether subdomains of own_domain count as own.
@@ -335,7 +344,10 @@ func Save(path string, cfg *Config) error {
 	fmt.Fprintf(&b, "db = %q\n", cfg.DB)
 	fmt.Fprintf(&b, "report_dir = %q\n", cfg.ReportDir)
 	fmt.Fprintf(&b, "brand_terms = %s\n", tomlStringSlice(cfg.BrandTerms))
-	fmt.Fprintf(&b, "competitors = %s\n\n", tomlStringSlice(cfg.Competitors))
+	fmt.Fprintf(&b, "competitors = %s\n", tomlStringSlice(cfg.Competitors))
+	b.WriteString("# false keeps only the answer hash: the text and the raw response are not\n")
+	b.WriteString("# written, for a database that is committed (C1 contract O20).\n")
+	fmt.Fprintf(&b, "store_answer_body = %t\n\n", cfg.HasAnswerBody())
 
 	b.WriteString("[report]\n")
 	fmt.Fprintf(&b, "language = %q  # en or ja; the CLI and the help stay English\n\n", cfg.Report.Language)

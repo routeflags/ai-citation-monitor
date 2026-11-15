@@ -33,6 +33,7 @@ type runOptions struct {
 	yes           bool
 	limit         int
 	session       string
+	store         string
 }
 
 func (a *App) runCommand() *cobra.Command {
@@ -64,6 +65,7 @@ session) is skipped, so a resumed run never pays twice.
 	flags.BoolVar(&opts.yes, "yes", false, "do not ask for confirmation")
 	flags.IntVar(&opts.limit, "limit", 0, "measure only the first N questions (trial runs)")
 	flags.StringVar(&opts.session, "session", "", "resume window label (default: today in JST)")
+	flags.StringVar(&opts.store, "store", "", "what to keep in the database: full (answer text + raw JSON) or hash-only (answer hash only; default from store_answer_body)")
 	return cmd
 }
 
@@ -94,6 +96,18 @@ func (a *App) runMeasure(cmd *cobra.Command, opts runOptions) error {
 	for _, name := range requested {
 		if _, ok := cfg.Provider(name); !ok {
 			return unknownProviderError(name)
+		}
+	}
+
+	storeBody := cfg.HasAnswerBody()
+	if opts.store != "" {
+		switch opts.store {
+		case "full":
+			storeBody = true
+		case "hash-only":
+			storeBody = false
+		default:
+			return failf(ExitConfig, "usage", "--store must be full or hash-only, got %q", opts.store)
 		}
 	}
 
@@ -206,6 +220,7 @@ func (a *App) runMeasure(cmd *cobra.Command, opts runOptions) error {
 		Competitors:        cfg.Competitors,
 		Concurrency:        concurrency,
 		Session:            session,
+		HashOnlyBody:       !storeBody,
 		QuestionSetVersion: setVersion,
 		QuestionSetSHA256:  setSHA,
 		Now:                a.NowUTC,
@@ -228,6 +243,7 @@ func (a *App) runMeasure(cmd *cobra.Command, opts runOptions) error {
 		}
 		fmt.Fprintf(a.Out, "condition: stage=%s repeat=%d session=%s\n", nonEmpty(opts.stage, "(none)"), opts.repeat, session)
 		fmt.Fprintf(a.Out, "calls:     %d planned, %d already recorded (skipped)\n", plan.Pending, plan.AlreadyDone)
+		fmt.Fprintf(a.Out, "store:     %s\n", storeLine(storeBody))
 		if plan.FailedRecorded > 0 {
 			// A recorded failure is not a measurement, but it holds its condition for
 			// this session (the database keeps one row per condition). Say so instead of
@@ -243,6 +259,7 @@ func (a *App) runMeasure(cmd *cobra.Command, opts runOptions) error {
 				"dry_run": true, "planned_calls": plan.Pending, "already_done": plan.AlreadyDone,
 				"failed_recorded": plan.FailedRecorded,
 				"session":         session, "targets": targets, "missing_credentials": missingEnvNames(missing),
+				"store": storeMode(storeBody),
 			})
 		}
 		fmt.Fprintln(a.Out, "dry-run: nothing was sent")
@@ -367,6 +384,23 @@ func validStage(stage string) bool {
 	default:
 		return false
 	}
+}
+
+// storeMode is the machine word for what a run keeps.
+func storeMode(storeBody bool) string {
+	if storeBody {
+		return "full"
+	}
+	return "hash-only"
+}
+
+// storeLine explains the store mode in the plan, because "hash-only" changes what
+// can be re-checked later.
+func storeLine(storeBody bool) string {
+	if storeBody {
+		return "full (answer text and raw JSON are kept and the hash is checked)"
+	}
+	return "hash-only (answer text and raw JSON are not written; only the hash is kept)"
 }
 
 func nonEmpty(value, fallback string) string {

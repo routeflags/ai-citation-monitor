@@ -20,7 +20,7 @@
 |---|---|---|
 | 取得経路 | netloom を subprocess で呼ぶ | 公式 API を `net/http` で直接叩く（SDK なし） |
 | 認証 | netloom の env 解決 | `OPENAI_API_KEY` / `GEMINI_API_KEY` / `ANTHROPIC_API_KEY`。設定には変数名だけ |
-| 証跡 | カセット（JSONL）+ 応答ファイル | DB の `responses.raw_response_json`（認証情報を除去） |
+| 証跡 | カセット（JSONL）+ 応答ファイル | DB の `responses.raw_response_json`（認証情報を除去）。`--store hash-only` / `store_answer_body = false` なら**ハッシュのみ**（C1 O20 対応、D16） |
 | 証跡の監査 | カセットの有無を目視 | `aicm verify`（DB 内整合性: responses 欠落・参照切れ・回答ハッシュ不一致） |
 | 費用・予算 | なし（旧も価格表なし） | **なし**（D11）。トークン数と web search 回数のみ記録。live の費用はプロバイダー請求で確認 |
 | Gemini の引用元 | `web.uri` のホストを採用 | `web.uri` は Vertex のリダイレクト。`web.domain` / `web.title` を引用元として記録（Norm 3） |

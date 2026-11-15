@@ -109,7 +109,11 @@ func (d *DB) IntegrityIssues(ctx context.Context) ([]Issue, error) {
 	}
 
 	// Hash and emptiness checks need the text in Go.
-	hashRows, err := d.sql.QueryContext(ctx, `SELECT run_id, answer_text, answer_sha256 FROM responses ORDER BY run_id`)
+	// Only a stored body can be checked against its hash. A hash-only row (body_stored
+	// = 0) has nothing to compare, which is the point of that mode, not a defect.
+	hashRows, err := d.sql.QueryContext(ctx, `
+		SELECT run_id, answer_text, answer_sha256 FROM responses
+		WHERE body_stored = 1 ORDER BY run_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +136,8 @@ func (d *DB) IntegrityIssues(ctx context.Context) ([]Issue, error) {
 
 	emptyRows, err := d.sql.QueryContext(ctx, `
 		SELECT r.id FROM runs r JOIN responses resp ON resp.run_id = r.id
-		WHERE r.status = 'success' AND TRIM(resp.answer_text) = '' ORDER BY r.id`)
+		WHERE r.status = 'success' AND resp.body_stored = 1
+		  AND TRIM(resp.answer_text) = '' ORDER BY r.id`)
 	if err != nil {
 		return nil, err
 	}

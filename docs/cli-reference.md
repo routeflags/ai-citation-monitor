@@ -81,7 +81,7 @@ aicm questions import --file questions.yml|questions.csv [--stage smoke] [--chec
 ```
 aicm run [--provider openai|gemini|anthropic|openai,anthropic,...] [--source ...] [--model M]
          [--repeat N] [--stage smoke|initial|regular] [--concurrency N] [--rpm N]
-         [--limit N] [--session S] [--dry-run] [--yes]
+         [--limit N] [--session S] [--store full|hash-only] [--dry-run] [--yes]
 ```
 
 - One call = one question x one repeat x one provider/model. `--repeat` is 1..5.
@@ -91,7 +91,12 @@ aicm run [--provider openai|gemini|anthropic|openai,anthropic,...] [--source ...
   one row per measurement condition, so a call that failed is not resent in the
   same session; the plan says so and names `--session`, which is how a retry gets a
   new condition (for example after fixing a credential).
-- `--dry-run` prints the questions, the planned call count and the checks, and
+- `--store hash-only` keeps the answer hash and writes no answer text and no raw
+  JSON (`store_answer_body = false` in the configuration does the same). Use it when
+  the database is committed: the rates and the citations are unaffected, `verify`
+  stops treating an empty body as a lost answer, and a hash-only row can no longer
+  be re-checked against its text. `--store full` (the default) keeps both.
+- `--dry-run` prints the questions, the planned call count, the store mode and the checks, and
   sends nothing. It needs no credential: a missing key
   is reported as `auth: <provider> <ENV>=missing` (a real run would exit 3), but
   the plan still prints and the exit code stays 0.

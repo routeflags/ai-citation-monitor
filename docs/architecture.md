@@ -80,7 +80,7 @@ was created by an older build.
 | `question_sets` | provenance of an imported question set (version, sha256, path) |
 | `competitors` | competitor domains, applied at report time |
 | `runs` | one attempted call: conditions, plan key, status, observability, counts |
-| `responses` | answer text, its sha256, the sanitised raw JSON, usage |
+| `responses` | answer text, its sha256, the sanitised raw JSON, usage, `body_stored` |
 | `citations` | raw URL, normalised URL, dedupe key, host, source type, malformed flag |
 | `mentions` | brand terms that hit the answer, with occurrences and an ambiguity flag |
 | `usage_records` | tokens and tool calls the provider reported (no cost) |
@@ -104,6 +104,11 @@ prefixed identity (`sha:<12 hex>`) because it names a version in reports;
 `responses.answer_sha256` is the full 64-character hex of the answer text with no
 prefix, because it is compared byte for byte by `aicm verify`. Storing one in the
 other's place makes a correct answer look edited.
+
+`responses.body_stored` is 1 when the answer text and the raw JSON are there and 0
+when the run was recorded hash-only (`--store hash-only`, `store_answer_body =
+false`). A hash-only row is a choice, not evidence loss: `verify` skips the hash and
+emptiness checks for it, and nothing in `report` or `export` needs the text.
 
 The second constraint is why a recorded *failure* is not resent in the same
 session: the condition already has its row. `aicm run` reports those calls and

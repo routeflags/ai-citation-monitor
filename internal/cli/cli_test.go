@@ -796,3 +796,38 @@ func TestJSONOutputIsOnlyJSON(t *testing.T) {
 		t.Fatalf("stdout is not JSON only: %v\n%s", err, stdout)
 	}
 }
+
+func TestRunCanStoreOnlyTheAnswerHash(t *testing.T) {
+	h := newHarness(t)
+	h.importQuestions()
+
+	// The plan says which mode is in effect before anything is sent.
+	code, stdout, stderr := h.run("run", "--provider", "openai", "--repeat", "1", "--store", "hash-only", "--dry-run")
+	if code != ExitOK {
+		t.Fatalf("dry-run = %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "store:     hash-only") {
+		t.Errorf("the plan must name the store mode:\n%s", stdout)
+	}
+
+	code, _, stderr = h.run("run", "--provider", "openai", "--repeat", "1", "--store", "hash-only", "--yes")
+	if code != ExitOK {
+		t.Fatalf("run = %d: %s", code, stderr)
+	}
+	kept := h.query(`SELECT COUNT(*) FROM responses
+		WHERE body_stored = 0 AND answer_text = '' AND raw_response_json = ''
+		  AND answer_sha256 <> ''`)
+	defer kept.close()
+	if got := kept.int64(); got != 2 {
+		t.Fatalf("hash-only rows = %d, want 2 (body empty, hash kept)", got)
+	}
+	if code, stdout, stderr := h.run("verify"); code != ExitOK {
+		t.Fatalf("verify = %d: %s\n%s", code, stderr, stdout)
+	}
+
+	// An unknown mode is a usage error, not a silent full store.
+	code, _, stderr = h.run("run", "--provider", "openai", "--repeat", "1", "--store", "partial", "--yes")
+	if code != ExitConfig {
+		t.Fatalf("exit = %d, want %d for an unknown store mode: %s", code, ExitConfig, stderr)
+	}
+}
