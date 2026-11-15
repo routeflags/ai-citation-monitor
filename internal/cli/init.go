@@ -11,6 +11,7 @@ import (
 
 	"github.com/routeflags/ai-citation-monitor/internal/config"
 	"github.com/routeflags/ai-citation-monitor/internal/domain"
+	"github.com/routeflags/ai-citation-monitor/internal/providers"
 	"github.com/routeflags/ai-citation-monitor/internal/providers/anthropic"
 	"github.com/routeflags/ai-citation-monitor/internal/runner"
 	"github.com/routeflags/ai-citation-monitor/internal/storage/sqlite"
@@ -250,8 +251,9 @@ func (a *App) versionCommand() *cobra.Command {
 					"gemini":    "generateContent/v1beta+google_search",
 					"anthropic": anthropic.EndpointVersion,
 				},
-				"measurement":     "official_api",
-				"live_api_tested": false,
+				"measurement":       "official_api",
+				"live_api_tested":   false, // no test calls a provider
+				"live_observations": providers.LiveObservation,
 			}
 			if a.JSON {
 				return a.PrintJSON(info)
@@ -259,8 +261,25 @@ func (a *App) versionCommand() *cobra.Command {
 			fmt.Fprintf(a.Out, "aicm %s (tool_version %s)\n", runner.Build, runner.ToolVersion())
 			fmt.Fprintf(a.Out, "providers: openai (responses/v1+web_search), gemini (generateContent/v1beta+google_search), anthropic (%s)\n",
 				anthropic.EndpointVersion)
-			fmt.Fprintf(a.Out, "live API: NOT verified (tests use fixtures and httptest only)\n")
+			fmt.Fprintf(a.Out, "live API: observed once per provider (%s)\n", summarizeLiveObservations())
+			fmt.Fprintf(a.Out, "tests:    never call a provider; CI uses fixtures and httptest only\n")
 			return nil
 		},
 	}
+}
+
+// summarizeLiveObservations renders a stable one-line summary, so the command does
+// not need a hand-written sentence per provider.
+func summarizeLiveObservations() string {
+	names := config.ProviderNames()
+	parts := make([]string, 0, len(names))
+	for _, name := range names {
+		if note := providers.LiveObservation[name]; note != "" {
+			parts = append(parts, name+": "+note)
+		}
+	}
+	if len(parts) == 0 {
+		return "no live call from this build"
+	}
+	return strings.Join(parts, "; ")
 }

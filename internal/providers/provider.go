@@ -89,6 +89,15 @@ type Provider interface {
 	Ask(ctx context.Context, req Request) (Result, error)
 }
 
+// LiveObservation is the one live call each adapter has had: provider -> model
+// and date. It is a fact about this build, not a test: CI never calls a provider,
+// and one observed model is not a supported-model list.
+var LiveObservation = map[string]string{
+	"openai":    "gpt-6.1-sol, 2026-11-15",
+	"gemini":    "gemini-3.1-pro-preview, 2026-11-15",
+	"anthropic": "claude-sonnet-5-5, 2026-11-15",
+}
+
 // HasCitationReports reports whether the response carried citation metadata at
 // all. Empty metadata ("the provider reports no citations for this answer") is
 // observed; absent metadata is unknown.

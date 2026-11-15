@@ -723,8 +723,11 @@ func TestVersionListsTheProvidersAndVersions(t *testing.T) {
 			t.Errorf("version output does not contain %q:\n%s", want, stdout)
 		}
 	}
-	if !strings.Contains(stdout, "NOT verified") {
-		t.Errorf("the version output must keep saying the live API is unverified:\n%s", stdout)
+	if !strings.Contains(stdout, "observed once per provider") {
+		t.Errorf("the version output must state what was observed live and what was not:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "never call a provider") {
+		t.Errorf("the version output must say the tests stay offline:\n%s", stdout)
 	}
 }
 
