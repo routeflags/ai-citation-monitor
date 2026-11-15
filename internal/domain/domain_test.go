@@ -56,11 +56,71 @@ func TestIsOwnDomain(t *testing.T) {
 		{"example.com.evil.test", "example.com", true, false},
 		{"example.com", "example.com.", true, true},
 		{"", "example.com", true, false},
+		// An international host and its ACE (punycode) form are one domain.
+		{"例え.テスト", "xn--r8jz45g.xn--zckzah", true, true},
+		{"xn--r8jz45g.xn--zckzah", "例え.テスト", true, true},
+		{"WWW.例え.テスト", "xn--r8jz45g.xn--zckzah", true, true},
+		{"例え.テスト.", "例え.テスト", true, true},
+		// The label boundary still holds in punycode.
+		{"xn--notexample-9d.com", "example.com", true, false},
 	}
 	for _, tc := range cases {
 		if got := IsOwnDomain(tc.domain, tc.own, tc.subdomains); got != tc.want {
 			t.Errorf("IsOwnDomain(%q, %q, %v) = %v, want %v", tc.domain, tc.own, tc.subdomains, got, tc.want)
 		}
+	}
+}
+
+func TestCanonicalHostMapsIDNToPunycode(t *testing.T) {
+	cases := map[string]string{
+		"例え.テスト":                    "xn--r8jz45g.xn--zckzah",
+		"XN--R8JZ45G.XN--ZCKZAH":    "xn--r8jz45g.xn--zckzah",
+		"Example.COM.":              "example.com",
+		"  example.com  ":           "example.com",
+		"bücher.example":            "xn--bcher-kva.example",
+		"an-invalid-punycode--.tld": "an-invalid-punycode--.tld",
+		"":                          "",
+	}
+	for host, want := range cases {
+		if got := CanonicalHost(host); got != want {
+			t.Errorf("CanonicalHost(%q) = %q, want %q", host, got, want)
+		}
+	}
+}
+
+func TestIsPublicSuffix(t *testing.T) {
+	publicSuffixes := []string{"github.io", "co.jp", "blogspot.com", "com", "s3.amazonaws.com"}
+	for _, host := range publicSuffixes {
+		if !IsPublicSuffix(host) {
+			t.Errorf("IsPublicSuffix(%q) = false, want true (a shared suffix cannot be one organisation)", host)
+		}
+	}
+	notSuffixes := []string{
+		"example.com", "example.shop", "www.example.com", "localhost", "",
+		// A real site under a hosting suffix is not the suffix itself.
+		"mysite.github.io",
+	}
+	for _, host := range notSuffixes {
+		if IsPublicSuffix(host) {
+			t.Errorf("IsPublicSuffix(%q) = true, want false", host)
+		}
+	}
+}
+
+func TestSplitCitationURLKeepsIDNInOnePopulation(t *testing.T) {
+	unicode := SplitCitationURL("https://例え.テスト/a")
+	ascii := SplitCitationURL("https://xn--r8jz45g.xn--zckzah/a")
+	if unicode.Domain == nil || ascii.Domain == nil {
+		t.Fatalf("both forms must have a host: %+v %+v", unicode, ascii)
+	}
+	if *unicode.Domain != *ascii.Domain {
+		t.Errorf("domains differ: %q vs %q", *unicode.Domain, *ascii.Domain)
+	}
+	if unicode.DedupeKey != ascii.DedupeKey {
+		t.Errorf("the same page must fold to one identity: %q vs %q", unicode.DedupeKey, ascii.DedupeKey)
+	}
+	if unicode.Malformed || ascii.Malformed {
+		t.Error("neither form is malformed")
 	}
 }
 

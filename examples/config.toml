@@ -44,6 +44,18 @@ api_key_env = "GEMINI_API_KEY"
 base_url = "https://generativelanguage.googleapis.com/v1beta"
 timeout_seconds = 90
 
+[providers.anthropic]
+# Messages API + the server-side web search tool.
+model = ""
+api_key_env = "ANTHROPIC_API_KEY"
+base_url = "https://api.anthropic.com"
+timeout_seconds = 90
+# The API requires max_tokens. A cut-off answer is recorded as an error, so keep
+# this high enough for a search-backed answer.
+max_tokens = 8192
+# Searches one call may run (server-side tool limit).
+max_uses = 5
+
 [limits]
 concurrency = 2
 rpm = 20

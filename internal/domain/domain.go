@@ -10,15 +10,20 @@ import (
 	"net/url"
 	"strings"
 
+	"golang.org/x/net/idna"
+	"golang.org/x/net/publicsuffix"
 	"golang.org/x/text/unicode/norm"
 )
 
 // NormalizerVersion is the version of the normalisation and matching rules.
 // Bump it whenever URL normalisation (query/fragment handling, trailing dot,
-// subdomain matching) or brand matching (NFKC) changes: cited_own and
+// IDN mapping, subdomain matching) or brand matching (NFKC) changes: cited_own and
 // brand_mentioned would change meaning, and records must stay comparable only
 // within one version.
-const NormalizerVersion = "1"
+//
+// 2: hosts are compared in punycode, so a Unicode citation and its ACE form are
+// one population (1 compared the raw host).
+const NormalizerVersion = "2"
 
 // Citation is one cited URL of a run, after normalisation. Position is 1-based
 // and counts after duplicate folding. Domain is nil when the URL has no usable
@@ -49,9 +54,53 @@ func NormalizeText(value string) string {
 	return strings.ToLower(strings.Join(strings.Fields(norm.NFKC.String(value)), " "))
 }
 
+// CanonicalHost is the form in which hosts are compared and stored: lower case,
+// no trailing dot, and international labels mapped to punycode. "例え.テスト" and
+// "xn--r8jz45g.xn--zckzah" therefore become one host, which is what decides
+// whether a citation is yours.
+//
+// A label that cannot be mapped is returned as-is: an odd host is still a citation
+// that came back from the provider, and dropping it would change the denominator.
+func CanonicalHost(host string) string {
+	trimmed := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	if trimmed == "" {
+		return ""
+	}
+	ascii, err := idna.Lookup.ToASCII(trimmed)
+	if err != nil || ascii == "" {
+		return trimmed
+	}
+	return strings.ToLower(ascii)
+}
+
+// IsPublicSuffix reports whether host is a public suffix itself: a registry
+// suffix such as "co.jp" or a hosting suffix such as "github.io".
+//
+// Such a name cannot be somebody's own domain: every customer under that suffix
+// would count as them, and the citation rate would be meaningless.
+//
+// A single label is only a suffix when it is a registry TLD: "com" is the whole
+// world, while "localhost" is a local name with no sharing relationship.
+func IsPublicSuffix(host string) bool {
+	canonical := CanonicalHost(host)
+	if canonical == "" {
+		return false
+	}
+	suffix, icann := publicsuffix.PublicSuffix(canonical)
+	if suffix != canonical {
+		return false
+	}
+	if !strings.Contains(canonical, ".") {
+		return icann
+	}
+	return true
+}
+
 // SplitCitationURL turns a raw citation URL into its normalised parts.
 //
-//   - the host is lower-cased and a trailing dot is removed (example.com. -> example.com)
+//   - the host is canonicalised (lower case, no trailing dot, punycode for
+//     international labels: see CanonicalHost), so https://例え.テスト/ and
+//     https://xn--r8jz45g.xn--zckzah/ are the same host
 //   - query and fragment never take part in host matching or duplicate folding,
 //     so ?utm_source=... does not create a second citation of the same page
 //   - schemes other than http/https, relative URLs and URLs without a host are
@@ -66,7 +115,7 @@ func SplitCitationURL(raw string) URLInfo {
 		return URLInfo{URL: trimmed, DedupeKey: trimmed, Malformed: true}
 	}
 	scheme := strings.ToLower(parsed.Scheme)
-	host := strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+	host := CanonicalHost(parsed.Hostname())
 	if (scheme != "http" && scheme != "https") || host == "" {
 		return URLInfo{URL: trimmed, DedupeKey: trimmed, Malformed: true}
 	}
@@ -84,14 +133,12 @@ func SplitCitationURL(raw string) URLInfo {
 
 // IsOwnDomain reports whether domain belongs to ownDomain. ownDomain is matched
 // exactly, or as a label-boundary suffix when subdomains is true: "sub.example.com"
-// matches "example.com", while "notexample.com" never does.
+// matches "example.com", while "notexample.com" never does. Both sides go through
+// CanonicalHost first, so a Unicode own_domain matches a punycode citation.
 func IsOwnDomain(domain string, ownDomain string, subdomains bool) bool {
-	if domain == "" || ownDomain == "" {
-		return false
-	}
-	own := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(ownDomain), "."))
-	host := strings.ToLower(strings.TrimSuffix(domain, "."))
-	if own == "" {
+	host := CanonicalHost(domain)
+	own := CanonicalHost(ownDomain)
+	if host == "" || own == "" {
 		return false
 	}
 	if host == own {

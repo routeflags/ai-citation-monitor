@@ -119,6 +119,53 @@ func TestAskWithoutAnnotationsIsObservedZero(t *testing.T) {
 	}
 }
 
+func TestAskReadsTheRealErrorEnvelope(t *testing.T) {
+	// The live API answers a bad key with a numeric top-level status next to the
+	// error object. Decoding that body as a success shape used to fail and report
+	// `response_not_json`, which loses the provider's own code and message.
+	client, _ := newTestClient(t, serveFixture(t, http.StatusUnauthorized, "testdata/error-auth.json"))
+	result, err := client.Ask(context.Background(), providers.Request{QuestionText: "q", Model: "gpt-test"})
+	if err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	if result.Status != providers.StatusError {
+		t.Fatalf("status = %s, want error", result.Status)
+	}
+	if result.ErrorKind != providers.ErrorKindProvider {
+		t.Errorf("error kind = %s, want provider (401 is not a transport failure)", result.ErrorKind)
+	}
+	if result.ErrorCode != "invalid_api_key" {
+		t.Errorf("error code = %q, want invalid_api_key (the provider's own code)", result.ErrorCode)
+	}
+	if !strings.Contains(result.ErrorMessage, "Incorrect API key provided") {
+		t.Errorf("error message = %q, want the provider's message", result.ErrorMessage)
+	}
+	if result.HTTPStatus != http.StatusUnauthorized {
+		t.Errorf("http status = %d, want 401", result.HTTPStatus)
+	}
+	if strings.Contains(string(result.RawJSON), testAPIKey) {
+		t.Error("the credential leaked into the raw body")
+	}
+}
+
+func TestAskUnknownErrorBodyKeepsTheStatus(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		w.Write([]byte("<html>bad gateway</html>"))
+	})
+	client, _ := newTestClient(t, handler)
+	result, _ := client.Ask(context.Background(), providers.Request{QuestionText: "q", Model: "gpt-test"})
+	if result.Status != providers.StatusError {
+		t.Fatalf("status = %s, want error", result.Status)
+	}
+	if result.ErrorCode != "http_502" {
+		t.Errorf("error code = %q, want http_502", result.ErrorCode)
+	}
+	if !strings.Contains(result.ErrorMessage, "502") {
+		t.Errorf("error message = %q, want the status in it", result.ErrorMessage)
+	}
+}
+
 func TestAskRecordsProviderError(t *testing.T) {
 	client, _ := newTestClient(t, serveFixture(t, http.StatusTooManyRequests, "testdata/error.json"))
 	result, _ := client.Ask(context.Background(), providers.Request{QuestionText: "q", Model: "gpt-test"})

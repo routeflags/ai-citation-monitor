@@ -104,6 +104,30 @@ func (c *Client) Ask(ctx context.Context, req providers.Request) (providers.Resu
 	result.HTTPStatus = resp.Status
 	result.RawJSON = resp.Body
 
+	// A failed call is decoded through its error envelope first, and only that.
+	// The real error body carries a numeric top-level status
+	// ({"error":{...},"status":401}), which the success shape cannot hold: reading
+	// a 401 as a success body used to fail decoding and report
+	// `response_not_json` while losing the provider's own code and message.
+	if resp.Status >= 400 {
+		var envelope errorEnvelope
+		if err := json.Unmarshal(resp.Body, &envelope); err == nil && envelope.Error != nil {
+			result.Status = providers.StatusError
+			result.ErrorKind = providers.ErrorKindProvider
+			result.ErrorCode = envelope.Error.errorCode(resp.Status)
+			result.ErrorMessage = envelope.Error.errorMessage()
+			if result.ErrorMessage == "" {
+				result.ErrorMessage = fmt.Sprintf("HTTP %d: %s", resp.Status, truncate(string(resp.Body)))
+			}
+			return finish(), nil
+		}
+		result.Status = providers.StatusError
+		result.ErrorKind = providers.ErrorKindProvider
+		result.ErrorCode = fmt.Sprintf("http_%d", resp.Status)
+		result.ErrorMessage = fmt.Sprintf("HTTP %d: %s", resp.Status, truncate(string(resp.Body)))
+		return finish(), nil
+	}
+
 	var payload responsePayload
 	if err := json.Unmarshal(resp.Body, &payload); err != nil {
 		result.Status = providers.StatusError
@@ -113,11 +137,11 @@ func (c *Client) Ask(ctx context.Context, req providers.Request) (providers.Resu
 		return finish(), nil
 	}
 
-	if resp.Status >= 400 || payload.Error != nil {
+	if payload.Error != nil {
 		result.Status = providers.StatusError
 		result.ErrorKind = providers.ErrorKindProvider
-		result.ErrorCode = payload.errorCode(resp.Status)
-		result.ErrorMessage = payload.errorMessage()
+		result.ErrorCode = payload.Error.errorCode(resp.Status)
+		result.ErrorMessage = payload.Error.errorMessage()
 		if result.ErrorMessage == "" {
 			result.ErrorMessage = fmt.Sprintf("HTTP %d: %s", resp.Status, truncate(string(resp.Body)))
 		}
@@ -132,10 +156,11 @@ func (c *Client) Ask(ctx context.Context, req providers.Request) (providers.Resu
 		result.Status = providers.StatusError
 		result.ErrorKind = providers.ErrorKindProvider
 		result.ErrorCode = "failed"
-		result.ErrorMessage = payload.errorMessage()
-		if result.ErrorMessage == "" {
-			result.ErrorMessage = "provider reported status=failed"
+		message := payload.Error.errorMessage()
+		if message == "" {
+			message = "provider reported status=failed"
 		}
+		result.ErrorMessage = message
 		return finish(), nil
 	}
 
@@ -169,7 +194,7 @@ func (c *Client) mapTransportError(ctx context.Context, result *providers.Result
 type responsePayload struct {
 	ID                string        `json:"id"`
 	Model             string        `json:"model"`
-	Status            string        `json:"status"`
+	Status            messageStatus `json:"status"`
 	OutputText        string        `json:"output_text"`
 	Output            []outputItem  `json:"output"`
 	Usage             *usagePayload `json:"usage"`
@@ -177,6 +202,33 @@ type responsePayload struct {
 	IncompleteDetails *struct {
 		Reason string `json:"reason"`
 	} `json:"incomplete_details"`
+}
+
+// errorEnvelope is the only shape an error response is decoded into. The status
+// is kept out of it: it is not needed to report the failure, and leaving it out
+// means no unexpected type can stop the envelope from decoding.
+type errorEnvelope struct {
+	Error *errorPayload `json:"error"`
+}
+
+// messageStatus is the success body's status ("completed" / "failed"). The
+// error body echoes the HTTP status as a number at the top level, so the decoder
+// accepts both shapes and an unexpected one never fails the whole payload.
+type messageStatus string
+
+func (s *messageStatus) UnmarshalJSON(data []byte) error {
+	var text string
+	if err := json.Unmarshal(data, &text); err == nil {
+		*s = messageStatus(text)
+		return nil
+	}
+	var number json.Number
+	if err := json.Unmarshal(data, &number); err == nil {
+		*s = messageStatus(number.String())
+		return nil
+	}
+	*s = ""
+	return nil
 }
 
 type outputItem struct {
@@ -287,11 +339,11 @@ func (p *responsePayload) usage() providers.Usage {
 	return usage
 }
 
-func (p *responsePayload) errorCode(status int) string {
-	if p.Error == nil {
+func (p *errorPayload) errorCode(status int) string {
+	if p == nil {
 		return fmt.Sprintf("http_%d", status)
 	}
-	switch code := p.Error.Code.(type) {
+	switch code := p.Code.(type) {
 	case string:
 		if code != "" {
 			return code
@@ -299,22 +351,22 @@ func (p *responsePayload) errorCode(status int) string {
 	case float64:
 		return fmt.Sprintf("%d", int(code))
 	}
-	if p.Error.Type != "" {
-		return p.Error.Type
+	if p.Type != "" {
+		return p.Type
 	}
 	return fmt.Sprintf("http_%d", status)
 }
 
-func (p *responsePayload) errorMessage() string {
-	if p.Error == nil {
+func (p *errorPayload) errorMessage() string {
+	if p == nil {
 		return ""
 	}
-	message := p.Error.Message
+	message := p.Message
 	if message == "" {
-		message = p.Error.Type
+		message = p.Type
 	}
-	if p.Error.Code != nil {
-		if code, ok := p.Error.Code.(string); ok && code != "" {
+	if p.Code != nil {
+		if code, ok := p.Code.(string); ok && code != "" {
 			message = fmt.Sprintf("%s (code=%s)", message, code)
 		}
 	}

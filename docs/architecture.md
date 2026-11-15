@@ -12,6 +12,7 @@ internal/providers  provider interface + Result
   internal/providers/httpclient   the only package that dials the network
   internal/providers/openai       Responses API + web_search
   internal/providers/gemini       generateContent + google_search
+  internal/providers/anthropic    Messages API + web_search_20250305 (server tool)
 internal/domain     URL normalisation, own-domain match, brand mention match
 internal/storage/sqlite  migrations, append-only writes, reads, integrity checks
 internal/analysis   the only definition of every rate (groups, coverage, share, trends)
@@ -23,7 +24,8 @@ migrations          embedded SQL, applied in order, tracked in schema_migrations
 
 Dependencies, deliberately few: `spf13/cobra` (CLI), `gopkg.in/yaml.v3` (question
 sets), `BurntSushi/toml` (config), `modernc.org/sqlite` (CGO-free SQLite),
-`golang.org/x/text` (NFKC), `golang.org/x/time` (token bucket).
+`golang.org/x/text` (NFKC), `golang.org/x/time` (token bucket), `golang.org/x/net`
+(IDN mapping and the public suffix list).
 
 ## One call, end to end
 
@@ -88,12 +90,18 @@ was created by an older build.
 
 Nothing in the tool issues `UPDATE` against `runs`, `responses`, `citations`,
 `mentions` or `usage_records`. A repeat of the same call is skipped because
-`runs.plan_key` is unique:
+`runs.plan_key` is unique (`sha256` of every condition) and `runs` additionally
+holds `UNIQUE (question_id, question_version, provider, model, repeat_index, stage,
+session)` — one row per measurement condition, whether it succeeded or not.
 
 ```
 plan_key = sha256(project, question, question_version, provider, model,
                   repeat_index, stage, session)
 ```
+
+The second constraint is why a recorded *failure* is not resent in the same
+session: the condition already has its row. `aicm run` reports those calls and
+points at `--session`, which is how a retry becomes a new condition.
 
 The session defaults to today's JST date and can be set with `--session`, which is
 how "measure again tomorrow" and "resume the interrupted run" are both expressed
@@ -105,6 +113,24 @@ without a second concept.
 - `runs.citation_observability`: `observed` (the provider returned citation
   metadata, possibly empty) or `unknown` (it returned none). `unknown` is excluded
   from citation-rate denominators and counted in the report.
+
+## What counts as your site
+
+`own_domain` decides whether a citation is yours, so it is a measurement rule, not a
+presentation setting (`NormalizerVersion` is bumped when it changes and is written
+into every run as part of `tool_version`).
+
+- **The comparison is by label, in punycode.** Both sides go through
+  `domain.CanonicalHost` (lower case, no trailing dot, `golang.org/x/net/idna`), so
+  `https://例え.テスト/` and `https://xn--r8jz45g.xn--zckzah/` are one population.
+- **`subdomains = true` matches on a label boundary only**: `www.example.com`
+  matches `example.com`, `notexample.com` never does.
+- **A public suffix is not an own domain.** `own_domain = "github.io"` or `"co.jp"`
+  is a configuration error (exit 2): every customer under that suffix would count as
+  one site, and the citation rate would be meaningless. The check uses
+  `golang.org/x/net/publicsuffix`, including the private section (hosting suffixes).
+- **Known limit**: a public suffix in `competitors` is not rejected, only
+  `own_domain` is. Registering `co.jp` as a competitor would over-match the same way.
 
 ## Integrity
 

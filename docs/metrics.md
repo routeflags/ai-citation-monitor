@@ -76,6 +76,10 @@ two sides are not the same measurement:
 
 `--comparable-only` hides the rows that cannot be compared.
 
+Both `compare` and `trends` use the same three reason codes and the same wording:
+`unmeasured` / `earlier_unmeasured`, `conditions_differ` (compare only), `n_differs`
+and `no_history` (trends only).
+
 ## Trends
 
 - `daily`, `weekly` (ISO week), `monthly`; buckets are **JST** because the calendar
@@ -83,6 +87,10 @@ two sides are not the same measurement:
 - The first bucket has nothing before it, so its delta is `— (no history)`.
 - When the previous bucket has no measurement, the delta is `— (not measured)` and
   the note says why.
+- When the previous bucket has a different denominator, the delta is printed with
+  `reason = n_differs` and `detail = "<prev> vs <now>"`, using the same vocabulary
+  and wording as `compare`. The two buckets are not the same sample size, so the
+  difference in percentage points is read next to that note.
 
 ## What the tool deliberately cannot tell you
 

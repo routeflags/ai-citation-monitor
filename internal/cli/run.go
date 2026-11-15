@@ -14,6 +14,7 @@ import (
 	"github.com/routeflags/ai-citation-monitor/internal/analysis"
 	"github.com/routeflags/ai-citation-monitor/internal/config"
 	"github.com/routeflags/ai-citation-monitor/internal/providers"
+	"github.com/routeflags/ai-citation-monitor/internal/providers/anthropic"
 	"github.com/routeflags/ai-citation-monitor/internal/providers/gemini"
 	"github.com/routeflags/ai-citation-monitor/internal/providers/httpclient"
 	"github.com/routeflags/ai-citation-monitor/internal/providers/openai"
@@ -52,7 +53,7 @@ session) is skipped, so a resumed run never pays twice.
 		},
 	}
 	flags := cmd.Flags()
-	flags.StringVar(&opts.source, "provider", "", "provider(s) to measure: openai, gemini (comma separated)")
+	flags.StringVar(&opts.source, "provider", "", "provider(s) to measure: "+strings.Join(config.ProviderNames(), ", ")+" (comma separated)")
 	flags.StringVar(&opts.providerAlias, "source", "", "alias of --provider")
 	flags.StringVar(&opts.model, "model", "", "model name (overrides the per-provider config; models are never invented)")
 	flags.IntVar(&opts.repeat, "repeat", 1, "repeats per question (smoke=1, initial=3, regular=5)")
@@ -227,13 +228,21 @@ func (a *App) runMeasure(cmd *cobra.Command, opts runOptions) error {
 		}
 		fmt.Fprintf(a.Out, "condition: stage=%s repeat=%d session=%s\n", nonEmpty(opts.stage, "(none)"), opts.repeat, session)
 		fmt.Fprintf(a.Out, "calls:     %d planned, %d already recorded (skipped)\n", plan.Pending, plan.AlreadyDone)
+		if plan.FailedRecorded > 0 {
+			// A recorded failure is not a measurement, but it holds its condition for
+			// this session (the database keeps one row per condition). Say so instead of
+			// letting the run look like there was nothing to do.
+			fmt.Fprintf(a.Out, "note:      %d of the recorded calls failed and are not resent in this session; pass --session <label> to measure them again\n",
+				plan.FailedRecorded)
+		}
 	}
 
 	if opts.dryRun {
 		if a.JSON {
 			return a.PrintJSON(map[string]any{
 				"dry_run": true, "planned_calls": plan.Pending, "already_done": plan.AlreadyDone,
-				"session": session, "targets": targets, "missing_credentials": missingEnvNames(missing),
+				"failed_recorded": plan.FailedRecorded,
+				"session":         session, "targets": targets, "missing_credentials": missingEnvNames(missing),
 			})
 		}
 		fmt.Fprintln(a.Out, "dry-run: nothing was sent")
@@ -273,6 +282,9 @@ func (a *App) runMeasure(cmd *cobra.Command, opts runOptions) error {
 	}
 
 	switch summary.ExitKind() {
+	case "api":
+		return failf(ExitAPI, "api_failure",
+			"every call failed at the provider (HTTP error); see the error_code column (records were kept)")
 	case "transport":
 		return failf(ExitAPI, "api_failure",
 			"every call failed at the transport level; see the error_code column (records were kept)")
@@ -304,6 +316,11 @@ func (a *App) buildProviders(cfg *config.Config, targets []runner.Target, rpm in
 		case "gemini":
 			result["gemini"] = gemini.New(gemini.Options{
 				APIKey: apiKey, BaseURL: providerCfg.BaseURL, HTTP: client, Secrets: secrets,
+			})
+		case "anthropic":
+			result["anthropic"] = anthropic.New(anthropic.Options{
+				APIKey: apiKey, BaseURL: providerCfg.BaseURL, HTTP: client, Secrets: secrets,
+				MaxTokens: cfg.Providers.Anthropic.MaxTokens, MaxUses: cfg.Providers.Anthropic.MaxUses,
 			})
 		}
 	}

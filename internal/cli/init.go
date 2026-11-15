@@ -10,6 +10,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/routeflags/ai-citation-monitor/internal/config"
+	"github.com/routeflags/ai-citation-monitor/internal/domain"
+	"github.com/routeflags/ai-citation-monitor/internal/providers/anthropic"
 	"github.com/routeflags/ai-citation-monitor/internal/runner"
 	"github.com/routeflags/ai-citation-monitor/internal/storage/sqlite"
 )
@@ -238,12 +240,16 @@ func (a *App) versionCommand() *cobra.Command {
 		Short: "Print the tool version and the API surfaces this build speaks",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			info := map[string]any{
-				"tool":            "aicm",
-				"version":         runner.Build,
-				"tool_version":    runner.ToolVersion(),
-				"normalizer":      "1",
-				"providers":       config.ProviderNames(),
-				"endpoints":       map[string]string{"openai": "responses/v1+web_search", "gemini": "generateContent/v1beta+google_search"},
+				"tool":         "aicm",
+				"version":      runner.Build,
+				"tool_version": runner.ToolVersion(),
+				"normalizer":   domain.NormalizerVersion,
+				"providers":    config.ProviderNames(),
+				"endpoints": map[string]string{
+					"openai":    "responses/v1+web_search",
+					"gemini":    "generateContent/v1beta+google_search",
+					"anthropic": anthropic.EndpointVersion,
+				},
 				"measurement":     "official_api",
 				"live_api_tested": false,
 			}
@@ -251,7 +257,8 @@ func (a *App) versionCommand() *cobra.Command {
 				return a.PrintJSON(info)
 			}
 			fmt.Fprintf(a.Out, "aicm %s (tool_version %s)\n", runner.Build, runner.ToolVersion())
-			fmt.Fprintf(a.Out, "providers: openai (responses/v1+web_search), gemini (generateContent/v1beta+google_search)\n")
+			fmt.Fprintf(a.Out, "providers: openai (responses/v1+web_search), gemini (generateContent/v1beta+google_search), anthropic (%s)\n",
+				anthropic.EndpointVersion)
 			fmt.Fprintf(a.Out, "live API: NOT verified (tests use fixtures and httptest only)\n")
 			return nil
 		},

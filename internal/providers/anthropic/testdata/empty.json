@@ -1,0 +1,9 @@
+{
+  "id": "msg_empty",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-test",
+  "content": [],
+  "stop_reason": "end_turn",
+  "usage": { "input_tokens": 900, "output_tokens": 0 }
+}

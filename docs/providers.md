@@ -56,7 +56,45 @@ Notes:
 - A blocked prompt (`promptFeedback.blockReason`) is recorded as an error
   (`error_code = blocked`), not as a zero-citation answer.
 
-## Rules that apply to both
+## Anthropic (Claude)
+
+| Item | Value |
+|---|---|
+| Endpoint | `POST {base_url}/v1/messages`, default base URL `https://api.anthropic.com` |
+| Auth | `x-api-key: $ANTHROPIC_API_KEY`, plus `anthropic-version: 2026-10-21` |
+| Search | request body `tools: [{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}]` |
+| Answer text | the `text` blocks of `content[]`, joined |
+| Citations | `content[].citations[]` where `type = "web_search_result_location"` (`url`, `title`, `cited_text`) |
+| Observability | `observed` when a `web_search_tool_result` block exists or a text block carries a `citations` field; `unknown` when neither does |
+| Usage | `usage.input_tokens`, `usage.output_tokens`, tool calls from `usage.server_tool_use.web_search_requests` (or counted from the `server_tool_use` blocks when that block is missing) |
+| Recorded endpoint version | `messages/v1+web_search_20250305+api_2026-10-21` |
+| Required request field | `max_tokens` (setting: `[providers.anthropic] max_tokens`, default 8192) |
+
+Notes:
+
+- **Only the answer's own citations count.** A `web_search_tool_result` block lists
+  what the search returned; a page in that list that the answer never cites is
+  **not** a citation. Counting it would inflate every rate with pages the model
+  rejected.
+- **`total_tokens` stays empty.** The Messages API reports input and output
+  tokens but no total, and this tool does not add one up (a guessed number is not
+  a measurement).
+- **Search errors arrive inside a 200.** When the search tool fails, the block's
+  `content` is a single `{"type": "web_search_tool_result_error", ...}` object
+  instead of a list. That is metadata (the search ran), not an answer error, so the
+  run stays successful and is `observed` with zero citations for that search.
+- **Stop reasons that make an answer unusable are errors.** `max_tokens` (the
+  answer was cut off), `refusal` (the model declined — that is not a zero-citation
+  answer), `pause_turn` (the turn paused for a long search; this tool sends one
+  request per call) and `tool_use` (a client tool was requested; this adapter sends
+  server tools only) are recorded with `error_code` equal to the reason, and stay
+  out of every denominator. Raise `max_tokens` rather than accepting a truncated
+  answer.
+- **The tool version is part of the surface.** A new `web_search_YYYYMMDD` type or
+  a new `anthropic-version` produces a new `api_endpoint_version`, so measurements
+  from different surfaces are never mixed.
+
+## Rules that apply to all of them
 
 - **One call = one run.** The runner never batches several questions into one
   request: the conditions of a run have to be exact.
@@ -67,7 +105,7 @@ Notes:
   exponential backoff with jitter, capped. Authentication and validation failures
   are returned at once — retrying them only burns quota.
 - **Rate limit and concurrency** are set in `[limits]` (`rpm`, `concurrency`).
-  The limit is per provider, so two providers do not share a bucket.
+  The limit is per provider, so one provider does not consume another's bucket.
 - **Credentials are read from the environment at call time** and are redacted from
   error messages and from the stored raw JSON. The configuration holds the variable
   name only, and `aicm init` refuses to write a value that looks like a credential.

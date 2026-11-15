@@ -1,0 +1,9 @@
+{
+  "id": "msg_no_metadata",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-test",
+  "content": [{ "type": "text", "text": "An answer that did not search." }],
+  "stop_reason": "end_turn",
+  "usage": { "input_tokens": 40, "output_tokens": 12 }
+}

@@ -22,7 +22,11 @@ Global flags:
 | 1 | validation failed, partial failure, or an integrity problem |
 | 2 | configuration / usage problem |
 | 3 | credential missing (nothing was sent) |
-| 4 | API / transport failure |
+| 4 | API / transport failure — also when *every* call of a run failed (reason `api_failure`) |
+
+A run where some calls succeeded and some failed is `partial_failure` (exit 1); a run
+where nothing succeeded is `api_failure` (exit 4), so a script can tell a broken
+credential or a provider outage from a mixed result.
 
 With `--json`, a failure is `{"error":{"code":2,"reason":"config_incomplete","message":"..."}}`.
 Reasons are stable strings: `config_incomplete`, `config_invalid`, `auth_missing`,
@@ -48,7 +52,7 @@ existing configuration.
 ```
 aicm questions add --id Q01 --text "..." --category definition [--language ja] [--version V]
 aicm questions list
-aicm questions import --file questions.yml|questions.csv [--stage smoke] [--check] [--dry-run] [--language ja]
+aicm questions import --file questions.yml|questions.csv [--stage smoke] [--check] [--dry-run] [--strict] [--language ja]
 ```
 
 - Categories: `definition`, `comparison`, `regulation`, `effect`, `safety`,
@@ -57,13 +61,19 @@ aicm questions import --file questions.yml|questions.csv [--stage smoke] [--chec
   Editing a text therefore starts a new version and never silently reuses an old
   measurement.
 - `import --check` validates and prints the summary without writing anything.
+- `import --strict` turns the stage nesting warning into an error (exit 1, and not a
+  single row is written). Without it a broken nesting only warns — and a broken
+  nesting means the stage question sets no longer line up between runs, so the
+  coverage denominator (questions with at least one citation-judgeable answer) stops
+  meaning the same thing. `--strict` works with `--check` and `--dry-run`; CSV has no
+  stages, so there it changes nothing.
 - CSV requires the header `id,text,category`; `language` and `version` are optional
   columns.
 
 ## run
 
 ```
-aicm run [--provider openai|gemini|openai,gemini] [--source ...] [--model M]
+aicm run [--provider openai|gemini|anthropic|openai,anthropic,...] [--source ...] [--model M]
          [--repeat N] [--stage smoke|initial|regular] [--concurrency N] [--rpm N]
          [--limit N] [--session S] [--dry-run] [--yes]
 ```
@@ -71,6 +81,10 @@ aicm run [--provider openai|gemini|openai,gemini] [--source ...] [--model M]
 - One call = one question x one repeat x one provider/model. `--repeat` is 1..5.
 - A call already recorded with the same conditions and session is skipped, so a
   resumed run never pays twice. `--session` defaults to today's JST date.
+- **A recorded failure holds its condition for that session.** The database keeps
+  one row per measurement condition, so a call that failed is not resent in the
+  same session; the plan says so and names `--session`, which is how a retry gets a
+  new condition (for example after fixing a credential).
 - `--dry-run` prints the questions, the planned call count and the checks, and
   sends nothing. It needs no credential: a missing key
   is reported as `auth: <provider> <ENV>=missing` (a real run would exit 3), but
@@ -85,6 +99,13 @@ target:    openai / <model>
 condition: stage=smoke repeat=1 session=2026-11-15
 calls:     5 planned, 0 already recorded (skipped)
 run: calls=5 success=5 failed=0 cancelled=0 skipped=0 not_run=0
+```
+
+- When every recorded call failed, the plan adds one line so a resumed run does not
+  look like a run with nothing to do:
+
+```
+note:      2 of the recorded calls failed and are not resent in this session; pass --session <label> to measure them again
 ```
 
 - `--json` output: `{"calls":5,"success":5,"failed":0,"cancelled":0,"skipped":0,"not_run":0,"exit_kind":"ok"}`.
@@ -125,6 +146,10 @@ aicm trends [--interval daily|weekly|monthly] [--period 90d] [--provider P] [--m
 ```
 
 One table per group. Buckets are JST. The first bucket says `— (no history)`.
+When a bucket's `n` differs from the previous bucket's, the delta is still printed
+but the row carries the same note `compare` uses (`n differs (2 vs 1)`), because the
+same percentage points over a different sample size are not the same comparison. A
+bucket with no measurement (`n = 0`) prints no delta at all.
 
 ## competitors
 
@@ -177,5 +202,6 @@ Checks the database against itself and exits 1 when anything is found:
 aicm version [--json]
 ```
 
-Prints the build, the normaliser version, the supported providers and their
-endpoint versions, and states that the live API is not verified.
+Prints the build, the normaliser version, the supported providers (`openai`,
+`gemini`, `anthropic`) and their endpoint versions, and states that the live API is
+not verified.

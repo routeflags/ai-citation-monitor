@@ -1,0 +1,19 @@
+{
+  "id": "msg_not_cited",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-test",
+  "content": [
+    { "type": "server_tool_use", "id": "srvtoolu_02", "name": "web_search", "input": { "query": "q" } },
+    {
+      "type": "web_search_tool_result",
+      "tool_use_id": "srvtoolu_02",
+      "content": [
+        { "type": "web_search_result", "url": "https://example.shop/x", "title": "x", "encrypted_content": "Eq", "page_age": null }
+      ]
+    },
+    { "type": "text", "text": "The answer needed no source after all.", "citations": [] }
+  ],
+  "stop_reason": "end_turn",
+  "usage": { "input_tokens": 1200, "output_tokens": 200, "server_tool_use": { "web_search_requests": 1 } }
+}

@@ -22,6 +22,7 @@ proves it. Nothing claims to have been measured against a live API.
 | `init` / `questions add,list,import` / `run --dry-run` / `report` / `compare` / `trends` / `export` / `verify` | **Verified** by `go test ./...` (offline) |
 | OpenAI adapter (Responses API + `web_search`) | **Implemented, not verified against the live API.** Request/response shapes come from the published documentation and from captured responses used as reference; the tests serve those shapes from `httptest` |
 | Gemini adapter (`generateContent` + `google_search`) | **Implemented, not verified against the live API.** Same caveat |
+| Anthropic adapter (Messages API + `web_search_20250305`) | **Implemented, not verified against the live API.** Request and citation shapes come from the published documentation; the tests serve those shapes from `httptest`. `max_tokens` defaults to 8192 and a cut-off answer is recorded as an error |
 | Citation extraction from provider metadata | **Verified** with fixtures for cited / not-cited / error / empty / no-metadata responses |
 | Retry (429 / 502 / 503 / 504, `Retry-After`), rate limit, concurrency, Ctrl+C resume | **Verified** by unit tests |
 | Live measurement of any provider | **Not done.** It spends money and needs a credential, so it only happens with an explicit owner decision |
@@ -150,7 +151,8 @@ a script can tell "no credential" from "bad config" without parsing text.
 
 - Go 1.26 or newer to build; a single static binary to run.
 - CLI only. No web UI, no server, no external database, no scheduled execution.
-- Phase 1 measures OpenAI and Gemini. Perplexity is out of scope for now.
+- Phase 1 measures OpenAI, Gemini and Anthropic (Claude). Perplexity is out of scope
+  for now.
 
 ## License
 

@@ -6,7 +6,7 @@
 | 版 | 2.0 |
 | 入力（正本） | `routeflags/ai-citation-monitor#1`（仕様 issue）、`documents/20261115.md`（Go 開発指示書。**改変しない**） |
 | 参照（読み取り専用） | `routeflags/seo-operations` `290d6ea` の `scripts/geo/`（意味の参照のみ。語彙・Python 資産は持ち込まない） |
-| 状態 | D1〜D11 すべて決定済み |
+| 状態 | D1〜D11 すべて決定済み。追加決定は `20261115-phase1-decisions-2.md`（D12 Anthropic / D13 IDN・PSL / D14 失敗した run の再実行） |
 
 ---
 

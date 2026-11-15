@@ -25,6 +25,7 @@ type questionImportOptions struct {
 	stage    string
 	check    bool
 	dryRun   bool
+	strict   bool
 	language string
 }
 
@@ -138,7 +139,13 @@ YAML is the contract format (set_version / own_domain / brand_terms / stages /
 questions[]). CSV needs the header id,text,category with optional language and
 version columns.
 
---check validates and prints the summary without writing anything.`,
+--check validates and prints the summary without writing anything.
+
+--strict turns the stage nesting warning into an error: every question of a
+smaller stage must also be in the next larger one (smoke <= initial <= regular).
+Without it a broken nesting only warns, and the stage sets stop meaning the same
+thing between runs, so the coverage denominator is no longer comparable. CSV has
+no stages, so --strict changes nothing there.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.file == "" {
 				return failf(ExitConfig, "usage", "--file is required")
@@ -159,6 +166,7 @@ version columns.
 	flags.StringVar(&opts.stage, "stage", "", "import only the questions of this stage (YAML only)")
 	flags.BoolVar(&opts.check, "check", false, "validate and print the summary without writing")
 	flags.BoolVar(&opts.dryRun, "dry-run", false, "validate everything but do not write")
+	flags.BoolVar(&opts.strict, "strict", false, "treat the stage nesting warning as an error (exit 1, nothing is written)")
 	flags.StringVar(&opts.language, "language", "", "language for CSV rows that do not set one")
 	return cmd
 }
@@ -168,7 +176,7 @@ func (a *App) importYAML(cmd *cobra.Command, opts questionImportOptions) error {
 	if err != nil {
 		return failf(ExitConfig, "question_set_unreadable", "%v", err)
 	}
-	errorsOut, warnings := set.Validate(false)
+	errorsOut, warnings := set.Validate(opts.strict)
 	for _, warning := range warnings {
 		fmt.Fprintf(a.Err, "warning: %s\n", warning)
 	}
@@ -262,6 +270,9 @@ func (a *App) importYAML(cmd *cobra.Command, opts questionImportOptions) error {
 }
 
 func (a *App) importCSV(cmd *cobra.Command, opts questionImportOptions) error {
+	// CSV carries no stages, so --strict has nothing to promote here. The flag is
+	// accepted so the same command line works for both formats; the structural
+	// problems a CSV can have (duplicate id, unknown category) are always errors.
 	file, err := os.Open(opts.file)
 	if err != nil {
 		return failf(ExitConfig, "question_set_unreadable", "%v", err)

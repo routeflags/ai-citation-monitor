@@ -109,6 +109,28 @@ func (c *Client) Ask(ctx context.Context, req providers.Request) (providers.Resu
 	result.HTTPStatus = resp.Status
 	result.RawJSON = resp.Body
 
+	// A failed call is decoded through its error envelope first, never through the
+	// success shape: one unexpected type in the success fields must not be able to
+	// hide the provider's own error code and message.
+	if resp.Status >= 400 {
+		var envelope errorEnvelope
+		if err := json.Unmarshal(resp.Body, &envelope); err == nil && envelope.Error != nil {
+			result.Status = providers.StatusError
+			result.ErrorKind = providers.ErrorKindProvider
+			result.ErrorCode = envelope.Error.errorCode(resp.Status)
+			result.ErrorMessage = envelope.Error.errorMessage()
+			if result.ErrorMessage == "" {
+				result.ErrorMessage = fmt.Sprintf("HTTP %d: %s", resp.Status, truncate(string(resp.Body)))
+			}
+			return finish(), nil
+		}
+		result.Status = providers.StatusError
+		result.ErrorKind = providers.ErrorKindProvider
+		result.ErrorCode = fmt.Sprintf("http_%d", resp.Status)
+		result.ErrorMessage = fmt.Sprintf("HTTP %d: %s", resp.Status, truncate(string(resp.Body)))
+		return finish(), nil
+	}
+
 	var payload responsePayload
 	if err := json.Unmarshal(resp.Body, &payload); err != nil {
 		result.Status = providers.StatusError
@@ -118,11 +140,11 @@ func (c *Client) Ask(ctx context.Context, req providers.Request) (providers.Resu
 		return finish(), nil
 	}
 
-	if resp.Status >= 400 || payload.Error != nil {
+	if payload.Error != nil {
 		result.Status = providers.StatusError
 		result.ErrorKind = providers.ErrorKindProvider
-		result.ErrorCode = payload.errorCode(resp.Status)
-		result.ErrorMessage = payload.errorMessage()
+		result.ErrorCode = payload.Error.errorCode(resp.Status)
+		result.ErrorMessage = payload.Error.errorMessage()
 		if result.ErrorMessage == "" {
 			result.ErrorMessage = fmt.Sprintf("HTTP %d: %s", resp.Status, truncate(string(resp.Body)))
 		}
@@ -174,6 +196,11 @@ type responsePayload struct {
 	} `json:"promptFeedback"`
 	UsageMetadata *usagePayload `json:"usageMetadata"`
 	Error         *errorPayload `json:"error"`
+}
+
+// errorEnvelope is the only shape an error response is decoded into.
+type errorEnvelope struct {
+	Error *errorPayload `json:"error"`
 }
 
 type candidate struct {
@@ -272,26 +299,26 @@ func (p *responsePayload) finishReason() string {
 	return ""
 }
 
-func (p *responsePayload) errorCode(status int) string {
-	if p.Error == nil {
+func (p *errorPayload) errorCode(status int) string {
+	if p == nil {
 		return fmt.Sprintf("http_%d", status)
 	}
-	if p.Error.Status != "" {
-		return p.Error.Status
+	if p.Status != "" {
+		return p.Status
 	}
-	if p.Error.Code != 0 {
-		return fmt.Sprintf("code_%d", p.Error.Code)
+	if p.Code != 0 {
+		return fmt.Sprintf("code_%d", p.Code)
 	}
 	return fmt.Sprintf("http_%d", status)
 }
 
-func (p *responsePayload) errorMessage() string {
-	if p.Error == nil {
+func (p *errorPayload) errorMessage() string {
+	if p == nil {
 		return ""
 	}
-	message := strings.TrimSpace(p.Error.Message)
-	if p.Error.Status != "" {
-		message = fmt.Sprintf("%s (%s)", message, p.Error.Status)
+	message := strings.TrimSpace(p.Message)
+	if p.Status != "" {
+		message = fmt.Sprintf("%s (%s)", message, p.Status)
 	}
 	return strings.TrimSpace(message)
 }

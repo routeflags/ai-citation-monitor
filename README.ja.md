@@ -19,6 +19,7 @@ English: [README.md](README.md).
 | `init` / `questions add,list,import` / `run --dry-run` / `report` / `compare` / `trends` / `export` / `verify` | **検証済み**（`go test ./...`、オフライン） |
 | OpenAI アダプター（Responses API + `web_search`） | **実装済み・実 API 未検証**。形は公開ドキュメントと、採取済み応答の構造を写した fixture に基づく。テストは `httptest` |
 | Gemini アダプター（`generateContent` + `google_search`） | **実装済み・実 API 未検証**。同上 |
+| Anthropic アダプター（Messages API + `web_search_20250305`） | **実装済み・実 API 未検証**。リクエストと引用の形は公開ドキュメントに基づき、テストはその形を `httptest` で配信する。`max_tokens` の既定は 8192 で、打ち切られた回答はエラーとして記録する |
 | 引用メタデータからの抽出 | **検証済み**（cited / not-cited / error / empty / メタデータなし の fixture） |
 | リトライ（429/502/503/504・`Retry-After`）・レート制限・並列・Ctrl+C 再開 | **検証済み**（単体テスト） |
 | 実 API での計測 | **行っていない**。課金と認証が必要なため、オーナーの明示判断があるときだけ行う |
@@ -102,7 +103,7 @@ aicm verify
 
 - ビルドには Go 1.26 以上。実行は単一バイナリ
 - CLI のみ。Web UI・サーバー・外部 DB・定期実行は作らない
-- Phase 1 のプロバイダーは OpenAI と Gemini（Perplexity は対象外）
+- Phase 1 のプロバイダーは OpenAI・Gemini・Anthropic (Claude)（Perplexity は対象外）
 
 ## ライセンス
 

@@ -43,13 +43,14 @@ type Item struct {
 
 // Plan is the call list shown before anything is sent.
 type Plan struct {
-	Items       []Item
-	Pending     int
-	AlreadyDone int
-	Repeat      int
-	Stage       string
-	Targets     []Target
-	Questions   int
+	Items          []Item
+	Pending        int
+	AlreadyDone    int
+	FailedRecorded int
+	Repeat         int
+	Stage          string
+	Targets        []Target
+	Questions      int
 }
 
 // Runner holds the collaborators of one run.
@@ -76,8 +77,13 @@ func planKey(projectID int64, question sqlite.Question, provider, model string, 
 	return hex.EncodeToString(hash.Sum(nil))[:32]
 }
 
-// BuildPlan enumerates every call and marks the ones already recorded. It does
+// BuildPlan enumerates every call and marks the ones already attempted. It does
 // not touch the network.
+//
+// A recorded failure blocks its condition for the same session just like a
+// success does, because the database keeps one row per condition. Such a call is
+// counted in FailedRecorded so the caller can say why nothing is being sent
+// instead of looking like a run with nothing to do.
 func (r *Runner) BuildPlan(ctx context.Context, questions []sqlite.Question, targets []Target, repeat int, stage string, limit int) (*Plan, error) {
 	if repeat <= 0 {
 		repeat = 1
@@ -90,17 +96,21 @@ func (r *Runner) BuildPlan(ctx context.Context, questions []sqlite.Question, tar
 		for _, question := range questions {
 			for index := 1; index <= repeat; index++ {
 				key := planKey(r.ProjectID, question, target.Provider, target.Model, index, stage, r.Session)
-				done, err := r.DB.PlanKeySeen(ctx, key)
+				attempted, succeeded, err := r.DB.PlanState(ctx, key)
 				if err != nil {
 					return nil, err
 				}
 				plan.Items = append(plan.Items, Item{
 					Question: question, Provider: target.Provider, Model: target.Model,
-					Stage: stage, Repeat: index, PlanKey: key, AlreadyDone: done,
+					Stage: stage, Repeat: index, PlanKey: key, AlreadyDone: attempted,
 				})
-				if done {
+				switch {
+				case succeeded:
 					plan.AlreadyDone++
-				} else {
+				case attempted:
+					plan.AlreadyDone++
+					plan.FailedRecorded++
+				default:
 					plan.Pending++
 				}
 			}
@@ -122,8 +132,15 @@ type Summary struct {
 }
 
 // ExitKind classifies the run for the caller's exit code.
+//
+// "api" and "transport" both mean nothing succeeded and every failure came from
+// the provider side; "partial" means some calls succeeded and some did not. A
+// run where every call failed is not a partial success, so a script can tell an
+// API problem (exit 4) from a mixed result (exit 1) by the reason alone.
 func (s *Summary) ExitKind() string {
 	switch {
+	case s.Calls > 0 && s.Success == 0 && s.Failed > 0 && s.ProviderFailures == s.Failed:
+		return "api"
 	case s.Calls > 0 && s.Success == 0 && s.TransportFailures > 0:
 		return "transport"
 	case s.Calls > 0 && s.Failed > 0:

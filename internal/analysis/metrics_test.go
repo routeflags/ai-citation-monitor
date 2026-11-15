@@ -192,6 +192,56 @@ func TestTrendsBucketsAndHistory(t *testing.T) {
 	}
 }
 
+func TestTrendsNotesADifferentDenominator(t *testing.T) {
+	// Bucket 1: cited 1 of 2. Bucket 2: cited 1 of 1. Bucket 3: nothing judgeable.
+	runs := []sqlite.Run{
+		run(1, "openai", "m", "smoke", "Q01", true, "observed", "success", "2026-11-01T01:00:00Z"),
+		run(2, "openai", "m", "smoke", "Q02", false, "observed", "success", "2026-11-01T01:00:00Z"),
+		run(3, "openai", "m", "smoke", "Q01", true, "observed", "success", "2026-11-08T01:00:00Z"),
+		run(4, "openai", "m", "smoke", "Q01", false, "unknown", "error", "2026-11-15T01:00:00Z"),
+	}
+	series, err := Trends(runs, "weekly")
+	if err != nil {
+		t.Fatalf("Trends: %v", err)
+	}
+	if len(series) != 1 || len(series[0].Points) != 3 {
+		t.Fatalf("series = %+v", series)
+	}
+	points := series[0].Points
+
+	if points[0].Reason != "no_history" || points[0].Detail != "" {
+		t.Errorf("the first bucket must only say it has no history: %+v", points[0])
+	}
+
+	// Same measure, different sample size: the delta is printed with a note that
+	// uses the compare vocabulary (reason n_differs, detail the two n).
+	if points[1].Reason != "n_differs" {
+		t.Errorf("reason = %q, want n_differs", points[1].Reason)
+	}
+	if points[1].Detail != "2 vs 1" {
+		t.Errorf("detail = %q, want the two denominators", points[1].Detail)
+	}
+	if points[1].Note != "n differs (2 vs 1)" {
+		t.Errorf("note = %q", points[1].Note)
+	}
+	if points[1].CitedDeltaText != "+50.0pt" {
+		t.Errorf("a different n must not hide the delta: %q", points[1].CitedDeltaText)
+	}
+
+	// An unmeasured bucket still suppresses the delta itself (existing rule).
+	if points[2].Reason != "earlier_unmeasured" {
+		t.Errorf("reason = %q, want earlier_unmeasured", points[2].Reason)
+	}
+	if points[2].CitedDelta != nil || points[2].Detail != "" {
+		t.Errorf("an unmeasured bucket must not produce a delta or an n note: %+v", points[2])
+	}
+
+	ja := TrendPoint{Reason: "n_differs", Detail: "2 vs 1"}.NoteFor(i18n.JA)
+	if ja != "n が違う（2 vs 1）" {
+		t.Errorf("ja note = %q, want the compare wording", ja)
+	}
+}
+
 func TestParsePeriodForms(t *testing.T) {
 	now := time.Date(2026, 11, 15, 3, 0, 0, 0, time.UTC)
 	period, err := ParsePeriod("7d", now)

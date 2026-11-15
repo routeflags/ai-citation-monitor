@@ -117,6 +117,29 @@ func TestPlanSkipsAlreadyRecordedCalls(t *testing.T) {
 	}
 }
 
+func TestExitKindTellsATotalProviderFailureFromAPartialRun(t *testing.T) {
+	cases := []struct {
+		name    string
+		summary Summary
+		want    string
+	}{
+		{"everything failed at the provider", Summary{Calls: 2, Failed: 2, ProviderFailures: 2}, "api"},
+		{"everything failed at the transport", Summary{Calls: 2, Failed: 2, TransportFailures: 2}, "transport"},
+		{"some calls succeeded", Summary{Calls: 2, Success: 1, Failed: 1, ProviderFailures: 1}, "partial"},
+		{"both kinds failed and none succeeded", Summary{Calls: 2, Failed: 2, ProviderFailures: 1, TransportFailures: 1}, "transport"},
+		{"everything succeeded", Summary{Calls: 2, Success: 2}, "ok"},
+		{"cancelled", Summary{Calls: 1, Cancelled: 1}, "partial"},
+		{"nothing planned", Summary{}, "ok"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.summary.ExitKind(); got != tc.want {
+				t.Errorf("ExitKind() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCancellationStopsNewCallsAndKeepsTheRest(t *testing.T) {
 	engine, question, db := setup(t)
 	fake := &fakeProvider{name: "fake", result: successResult(), delay: 5 * time.Millisecond}

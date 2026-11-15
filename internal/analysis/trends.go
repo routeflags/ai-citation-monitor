@@ -22,18 +22,24 @@ type TrendPoint struct {
 	CitedDeltaText string   `json:"cited_delta_text"`
 	BrandDelta     *float64 `json:"brand_delta"`
 	BrandDeltaText string   `json:"brand_delta_text"`
-	// Reason explains a missing delta: "no_history" or "earlier_unmeasured".
+	// Reason explains a missing delta, or a delta that must be read with care:
+	// "no_history", "earlier_unmeasured" or "n_differs" (the same vocabulary as
+	// compare). Detail carries the two denominators for "n_differs".
 	Reason string `json:"reason"`
+	Detail string `json:"detail"`
 	Note   string `json:"note"`
 }
 
-// NoteFor renders the explanation in the requested language.
+// NoteFor renders the explanation in the requested language. The wording comes
+// from compare, so the two commands cannot drift apart.
 func (p TrendPoint) NoteFor(lang i18n.Lang) string {
 	switch p.Reason {
 	case "no_history":
 		return lang.Pick("no earlier bucket to compare with", "履歴不足")
 	case "earlier_unmeasured":
 		return lang.Pick("the earlier bucket has no measurement", "前期間が未測定")
+	case "n_differs":
+		return lang.Pick("n differs (", "n が違う（") + p.Detail + lang.Pick(")", "）")
 	default:
 		return ""
 	}
@@ -72,7 +78,9 @@ func BucketLabel(startedAtUTC string, interval string) (string, error) {
 }
 
 // Trends builds one series per group. The first bucket carries "履歴不足" because
-// there is nothing to compare it with.
+// there is nothing to compare it with. A bucket whose denominator differs from
+// the previous one keeps its delta but is marked n_differs, because a difference
+// of percentage points over a different n is not the same comparison.
 func Trends(runs []sqlite.Run, interval string) ([]TrendSeries, error) {
 	type bucket struct {
 		total, valid, errored, unknown int
@@ -157,6 +165,13 @@ func Trends(runs []sqlite.Run, interval string) ([]TrendSeries, error) {
 				point.BrandDeltaText = DeltaText(point.BrandDelta, i18n.EN)
 				if point.CitedDelta == nil {
 					point.Reason = "earlier_unmeasured"
+					point.Note = point.NoteFor(i18n.EN)
+				} else if previous.CitedOwn.D != point.CitedOwn.D {
+					// The delta is still printed (unlike compare, which can hide a whole
+					// row), but it is read next to the note: the two buckets are not the
+					// same sample size.
+					point.Reason = "n_differs"
+					point.Detail = itoa(previous.CitedOwn.D) + " vs " + itoa(point.CitedOwn.D)
 					point.Note = point.NoteFor(i18n.EN)
 				}
 			}

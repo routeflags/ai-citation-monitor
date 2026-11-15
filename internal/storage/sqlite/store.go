@@ -202,17 +202,22 @@ func (d *DB) Competitors(ctx context.Context, projectID int64) ([]string, error)
 	return domains, rows.Err()
 }
 
-// PlanKeySeen reports whether a call with this identity already completed.
-func (d *DB) PlanKeySeen(ctx context.Context, planKey string) (bool, error) {
-	var id int64
-	err := d.sql.QueryRowContext(ctx, `SELECT id FROM runs WHERE plan_key = ?`, planKey).Scan(&id)
+// PlanState reports whether a call with this identity was already attempted and
+// whether that attempt succeeded.
+//
+// A failure is recorded too (append only), and the runs table allows one row per
+// measurement condition, so a failed attempt holds its condition just like a
+// successful one. The plan says so instead of resending it.
+func (d *DB) PlanState(ctx context.Context, planKey string) (attempted bool, succeeded bool, err error) {
+	var status string
+	err = d.sql.QueryRowContext(ctx, `SELECT status FROM runs WHERE plan_key = ?`, planKey).Scan(&status)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		return false, false, nil
 	}
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
-	return true, nil
+	return true, status == "success", nil
 }
 
 // InsertRun appends one run with its response, citations, mentions and usage in a

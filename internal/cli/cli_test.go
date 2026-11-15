@@ -18,16 +18,19 @@ import (
 // real credential are ever involved: the API key is a dummy value and the base
 // URL points at httptest.
 type harness struct {
-	t          *testing.T
-	dir        string
-	configPath string
-	dbPath     string
-	server     *httptest.Server
-	openaiHits atomic.Int32
-	geminiHits atomic.Int32
+	t             *testing.T
+	dir           string
+	configPath    string
+	dbPath        string
+	server        *httptest.Server
+	openaiHits    atomic.Int32
+	geminiHits    atomic.Int32
+	anthropicHits atomic.Int32
 	// openaiBody is served for every /responses call.
-	openaiBody string
-	geminiBody string
+	openaiBody    string
+	openaiStatus  int
+	geminiBody    string
+	anthropicBody string
 }
 
 const openAICited = `{
@@ -47,6 +50,35 @@ const openAICited = `{
   "usage": {"input_tokens": 1000, "output_tokens": 500, "total_tokens": 1500}
 }`
 
+const openAIInvalidKey = `{
+  "error": {
+    "message": "Incorrect API key provided: sk-test-****. You can find your API key at https://platform.openai.com/account/api-keys.",
+    "type": "invalid_request_error",
+    "code": "invalid_api_key",
+    "param": null
+  },
+  "status": 401
+}`
+
+const anthropicCited = `{
+  "id": "msg_test",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-test",
+  "content": [
+    {"type": "server_tool_use", "id": "srvtoolu_1", "name": "web_search", "input": {"query": "q"}},
+    {"type": "web_search_tool_result", "tool_use_id": "srvtoolu_1", "content": [
+      {"type": "web_search_result", "url": "https://example.shop/faq", "title": "faq"}
+    ]},
+    {"type": "text", "text": "Example Shop answers it. Rival also has a page.", "citations": [
+      {"type": "web_search_result_location", "url": "https://example.shop/faq", "title": "faq", "encrypted_index": "e1", "cited_text": "..."},
+      {"type": "web_search_result_location", "url": "https://rival.example/page", "title": "rival", "encrypted_index": "e2", "cited_text": "..."}
+    ]}
+  ],
+  "stop_reason": "end_turn",
+  "usage": {"input_tokens": 800, "output_tokens": 300, "server_tool_use": {"web_search_requests": 1}}
+}`
+
 const geminiCited = `{
   "candidates": [
     {"content": {"parts": [{"text": "Example covers it."}]},
@@ -61,6 +93,7 @@ func newHarness(t *testing.T) *harness {
 	t.Helper()
 	h := &harness{
 		t: t, dir: t.TempDir(), openaiBody: openAICited, geminiBody: geminiCited,
+		anthropicBody: anthropicCited,
 	}
 	h.configPath = filepath.Join(h.dir, "aicm.toml")
 	h.dbPath = filepath.Join(h.dir, "measurements", "aicm.db")
@@ -73,6 +106,11 @@ func newHarness(t *testing.T) *harness {
 			if got := r.Header.Get("Authorization"); !strings.HasPrefix(got, "Bearer ") {
 				t.Errorf("missing authorization header")
 			}
+			status := h.openaiStatus
+			if status == 0 {
+				status = http.StatusOK
+			}
+			w.WriteHeader(status)
 			w.Write([]byte(h.openaiBody))
 		case strings.Contains(r.URL.Path, ":generateContent"):
 			h.geminiHits.Add(1)
@@ -80,6 +118,15 @@ func newHarness(t *testing.T) *harness {
 				t.Errorf("missing x-goog-api-key header")
 			}
 			w.Write([]byte(h.geminiBody))
+		case strings.HasSuffix(r.URL.Path, "/v1/messages"):
+			h.anthropicHits.Add(1)
+			if r.Header.Get("x-api-key") == "" {
+				t.Errorf("missing x-api-key header")
+			}
+			if r.Header.Get("anthropic-version") == "" {
+				t.Errorf("missing anthropic-version header")
+			}
+			w.Write([]byte(h.anthropicBody))
 		default:
 			t.Errorf("unexpected path %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -89,6 +136,7 @@ func newHarness(t *testing.T) *harness {
 
 	t.Setenv("OPENAI_API_KEY", "sk-test-dummy")
 	t.Setenv("GEMINI_API_KEY", "gemini-test-dummy")
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test-dummy")
 	h.writeConfig()
 	if code, _, stderr := h.run("init", "--non-interactive", "--force", "--site-id", "demo", "--own-domain", "example.shop"); code != ExitOK {
 		t.Fatalf("init = %d: %s", code, stderr)
@@ -122,11 +170,19 @@ api_key_env = "GEMINI_API_KEY"
 base_url = %q
 timeout_seconds = 5
 
+[providers.anthropic]
+model = "claude-test"
+api_key_env = "ANTHROPIC_API_KEY"
+base_url = %q
+timeout_seconds = 5
+max_tokens = 2048
+max_uses = 3
+
 [limits]
 concurrency = 2
 rpm = 6000
 max_retries = 0
-`, h.dbPath, filepath.Join(h.dir, "reports"), h.server.URL, h.server.URL)
+`, h.dbPath, filepath.Join(h.dir, "reports"), h.server.URL, h.server.URL, h.server.URL)
 	if err := os.WriteFile(h.configPath, []byte(config), 0o644); err != nil {
 		h.t.Fatalf("write config: %v", err)
 	}
@@ -162,6 +218,131 @@ func (h *harness) query(sqlText string) *sqlHandle {
 		h.t.Fatalf("open db: %v", err)
 	}
 	return &sqlHandle{db: db, t: h.t, query: sqlText}
+}
+
+// brokenNesting drops the smoke question from initial, so smoke is no longer a
+// subset of initial.
+const brokenNesting = `set_version: "1.0.0"
+site_id: demo
+own_domain: example.shop
+market: ja-JP
+brand_terms:
+  - Example
+questions:
+  - { id: Q01, text: "THCVとTHCの違いは？", category: comparison }
+  - { id: Q02, text: "THCHとは何ですか？", category: definition }
+stages:
+  smoke:
+    runs_per_question: 1
+    question_ids: [Q01, Q02]
+  initial:
+    runs_per_question: 3
+    question_ids: [Q02]
+`
+
+func writeQuestionSet(t *testing.T, h *harness, content string) string {
+	t.Helper()
+	path := filepath.Join(h.dir, "questions-strict.yml")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write question set: %v", err)
+	}
+	return path
+}
+
+func TestQuestionsImportWarnsAboutBrokenNestingByDefault(t *testing.T) {
+	h := newHarness(t)
+	path := writeQuestionSet(t, h, brokenNesting)
+
+	code, stdout, stderr := h.run("questions", "import", "--file", path)
+	if code != ExitOK {
+		t.Fatalf("exit = %d, want 0 (a warning must not stop the import): %s", code, stderr)
+	}
+	if !strings.Contains(stderr, "W040") {
+		t.Fatalf("stderr should carry the nesting warning:\n%s", stderr)
+	}
+	if !strings.Contains(stdout, "inserted=2") {
+		t.Errorf("stdout:\n%s", stdout)
+	}
+}
+
+func TestQuestionsImportStrictTurnsTheNestingWarningIntoAnError(t *testing.T) {
+	h := newHarness(t)
+	path := writeQuestionSet(t, h, brokenNesting)
+
+	for _, extra := range [][]string{
+		{"--strict"},
+		{"--strict", "--check"},
+		{"--strict", "--dry-run"},
+	} {
+		args := append([]string{"questions", "import", "--file", path}, extra...)
+		code, stdout, stderr := h.run(args...)
+		if code != ExitGeneral {
+			t.Fatalf("%v: exit = %d, want %d: %s", extra, code, ExitGeneral, stderr)
+		}
+		if !strings.Contains(stderr, "E040") {
+			t.Errorf("%v: the promoted error must keep the code:\n%s", extra, stderr)
+		}
+		if strings.Contains(stdout, "OK:") {
+			t.Errorf("%v: a strict failure must not report OK:\n%s", extra, stdout)
+		}
+	}
+
+	counts := h.query("SELECT COUNT(*) FROM questions")
+	defer counts.close()
+	if got := counts.int64(); got != 0 {
+		t.Fatalf("questions = %d, want 0: a strict failure writes nothing", got)
+	}
+}
+
+func TestQuestionsImportStrictJSONFailureIsOnlyJSON(t *testing.T) {
+	h := newHarness(t)
+	path := writeQuestionSet(t, h, brokenNesting)
+
+	code, stdout, stderr := h.run("--json", "questions", "import", "--file", path, "--strict")
+	if code != ExitGeneral {
+		t.Fatalf("exit = %d, want %d", code, ExitGeneral)
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Fatalf("a strict failure must not write a data document on stdout:\n%s", stdout)
+	}
+	// The per-problem lines and the JSON error both go to stderr: the last line is
+	// the machine readable failure, the lines before it say which codes fired.
+	if !strings.Contains(stderr, "E040") {
+		t.Errorf("stderr should name the promoted code:\n%s", stderr)
+	}
+	lines := strings.Split(strings.TrimSpace(stderr), "\n")
+	last := lines[len(lines)-1]
+	var payload struct {
+		Error struct {
+			Code   int    `json:"code"`
+			Reason string `json:"reason"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(last), &payload); err != nil {
+		t.Fatalf("the last stderr line is not the JSON error document: %v\n%s", err, stderr)
+	}
+	if payload.Error.Code != ExitGeneral || payload.Error.Reason != "question_set_invalid" {
+		t.Errorf("error = %+v, want code 1 / question_set_invalid", payload.Error)
+	}
+}
+
+func TestQuestionsImportStrictAcceptsACorrectSet(t *testing.T) {
+	h := newHarness(t)
+
+	// The nesting contract holds here, so --strict must not fire.
+	code, _, stderr := h.run("questions", "import", "--file", filepath.Join("testdata", "questions.yml"), "--strict")
+	if code != ExitOK {
+		t.Fatalf("yaml: exit = %d, want 0: %s", code, stderr)
+	}
+	// CSV carries no stages, so --strict has nothing to promote: the same command
+	// line must keep working.
+	code, stdout, stderr := h.run("questions", "import", "--file", filepath.Join("testdata", "questions.csv"), "--strict", "--dry-run")
+	if code != ExitOK {
+		t.Fatalf("csv: exit = %d, want 0: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "questions: 2") {
+		t.Errorf("stdout:\n%s", stdout)
+	}
 }
 
 func TestRunDryRunDoesNotTouchTheNetwork(t *testing.T) {
@@ -361,6 +542,75 @@ func TestTransportFailureExits4AndKeepsNoFalseSuccess(t *testing.T) {
 	}
 }
 
+func TestEveryCallFailingAtTheProviderExits4(t *testing.T) {
+	// 1 of 1 calls failing is not a partial success: a script must be able to tell
+	// an API problem (exit 4, reason api_failure) from a mixed result (exit 1).
+	h := newHarness(t)
+	h.importQuestions()
+	h.openaiBody = openAIInvalidKey
+	h.openaiStatus = http.StatusUnauthorized
+
+	code, stdout, stderr := h.run("run", "--provider", "openai", "--repeat", "1", "--yes")
+	if code != ExitAPI {
+		t.Fatalf("exit = %d, want %d: %s\n%s", code, ExitAPI, stderr, stdout)
+	}
+	counts := h.query(`SELECT COUNT(*) FROM runs r JOIN responses resp ON resp.run_id = r.id
+		WHERE r.status = 'error' AND resp.error_code = 'invalid_api_key'`)
+	defer counts.close()
+	if got := counts.int64(); got != 2 {
+		t.Fatalf("runs with the provider's error code = %d, want 2 (the real error envelope must be read)", got)
+	}
+}
+
+func TestAFailedCallHoldsItsConditionForTheSession(t *testing.T) {
+	// A failure is recorded but is not a measurement. The database keeps one row
+	// per measurement condition, so the same session does not resend it: the plan
+	// must say that instead of looking like a run with nothing to do, and
+	// --session is how an operator asks for a real retry.
+	h := newHarness(t)
+	h.importQuestions()
+	h.openaiBody = openAIInvalidKey
+	h.openaiStatus = http.StatusUnauthorized
+	if code, _, stderr := h.run("run", "--provider", "openai", "--repeat", "1", "--yes"); code != ExitAPI {
+		t.Fatalf("the failing run = %d, want %d: %s", code, ExitAPI, stderr)
+	}
+
+	h.openaiBody = openAICited
+	h.openaiStatus = http.StatusOK
+	code, stdout, stderr := h.run("run", "--provider", "openai", "--repeat", "1", "--yes")
+	if code != ExitOK {
+		t.Fatalf("the second run = %d, want 0 (nothing was sent): %s\n%s", code, stderr, stdout)
+	}
+	if h.openaiHits.Load() != 2 {
+		t.Fatalf("requests = %d, want 2: the failed conditions are not resent in the same session", h.openaiHits.Load())
+	}
+	if !strings.Contains(stdout, "calls:     0 planned, 2 already recorded") {
+		t.Errorf("stdout:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "2 of the recorded calls failed") || !strings.Contains(stdout, "--session") {
+		t.Errorf("the plan must explain why nothing was sent and how to retry:\n%s", stdout)
+	}
+
+	// A new session is a new measurement condition, so the calls are sent again.
+	code, stdout, stderr = h.run("run", "--provider", "openai", "--repeat", "1", "--session", "retry-1", "--yes")
+	if code != ExitOK {
+		t.Fatalf("the retry session = %d: %s\n%s", code, stderr, stdout)
+	}
+	if h.openaiHits.Load() != 4 {
+		t.Fatalf("requests = %d, want 4 (2 failed + 2 measured again in a new session)", h.openaiHits.Load())
+	}
+	total := h.query("SELECT COUNT(*) FROM runs")
+	defer total.close()
+	if got := total.int64(); got != 4 {
+		t.Fatalf("runs = %d, want 4: the retry is appended, nothing is overwritten", got)
+	}
+	successes := h.query("SELECT COUNT(*) FROM runs WHERE status = 'success'")
+	defer successes.close()
+	if got := successes.int64(); got != 2 {
+		t.Fatalf("successful runs = %d, want 2", got)
+	}
+}
+
 func TestVerifyFindsTamperedAnswer(t *testing.T) {
 	h := newHarness(t)
 	h.importQuestions()
@@ -389,6 +639,92 @@ func TestConfigProblemsExit2(t *testing.T) {
 	code, _, stderr := h.run("run", "--provider", "openai", "--dry-run")
 	if code != ExitConfig {
 		t.Fatalf("exit = %d, want %d: %s", code, ExitConfig, stderr)
+	}
+}
+
+func TestPublicSuffixOwnDomainExits2(t *testing.T) {
+	// Every customer of github.io or co.jp would otherwise count as us.
+	for _, own := range []string{"github.io", "co.jp", "com"} {
+		h := newHarness(t)
+		content := fmt.Sprintf(`site_id = "demo"
+own_domain = %q
+market = "ja-JP"
+
+[providers.openai]
+model = "gpt-test"
+api_key_env = "OPENAI_API_KEY"
+`, own)
+		if err := os.WriteFile(h.configPath, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		code, _, stderr := h.run("run", "--provider", "openai", "--dry-run")
+		if code != ExitConfig {
+			t.Fatalf("own_domain %q: exit = %d, want %d: %s", own, code, ExitConfig, stderr)
+		}
+		if !strings.Contains(stderr, "public suffix") {
+			t.Errorf("own_domain %q: the message must name the problem:\n%s", own, stderr)
+		}
+	}
+
+	// A normal domain is not blocked.
+	h := newHarness(t)
+	h.importQuestions()
+	if code, _, stderr := h.run("run", "--provider", "openai", "--dry-run"); code != ExitOK {
+		t.Fatalf("example.shop must be accepted: %d: %s", code, stderr)
+	}
+}
+
+func TestAnthropicIsARegisteredProvider(t *testing.T) {
+	h := newHarness(t)
+	h.importQuestions()
+
+	// --provider anthropic runs through the same plan and recording path.
+	code, stdout, stderr := h.run("run", "--provider", "anthropic", "--repeat", "1", "--yes")
+	if code != ExitOK {
+		t.Fatalf("run = %d: %s\n%s", code, stderr, stdout)
+	}
+	if h.anthropicHits.Load() != 2 {
+		t.Fatalf("anthropic requests = %d, want 2 (2 questions x 1 repeat)", h.anthropicHits.Load())
+	}
+	if h.openaiHits.Load() != 0 {
+		t.Fatalf("openai was called (%d) although only anthropic was selected", h.openaiHits.Load())
+	}
+
+	runs := h.query("SELECT COUNT(*) FROM runs WHERE provider = 'anthropic' AND api_endpoint_version LIKE 'messages/v1%'")
+	defer runs.close()
+	if got := runs.int64(); got != 2 {
+		t.Fatalf("anthropic runs = %d, want 2 with the messages/v1 endpoint version", got)
+	}
+	cited := h.query("SELECT COUNT(*) FROM runs WHERE provider = 'anthropic' AND cited_own = 1 AND citation_count = 2")
+	defer cited.close()
+	if cited.int64() != 2 {
+		t.Errorf("the cited fixture should record cited_own with two citations")
+	}
+
+	// Two providers in one run keep separate groups.
+	code, stdout, stderr = h.run("run", "--provider", "openai,anthropic", "--repeat", "1", "--session", "both", "--yes")
+	if code != ExitOK {
+		t.Fatalf("run both = %d: %s\n%s", code, stderr, stdout)
+	}
+	if h.openaiHits.Load() != 2 || h.anthropicHits.Load() != 4 {
+		t.Fatalf("hits: openai=%d anthropic=%d, want 2 and 4", h.openaiHits.Load(), h.anthropicHits.Load())
+	}
+}
+
+func TestVersionListsTheProvidersAndVersions(t *testing.T) {
+	h := newHarness(t)
+
+	code, stdout, stderr := h.run("version")
+	if code != ExitOK {
+		t.Fatalf("version = %d: %s", code, stderr)
+	}
+	for _, want := range []string{"openai", "gemini", "anthropic", "messages/v1"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("version output does not contain %q:\n%s", want, stdout)
+		}
+	}
+	if !strings.Contains(stdout, "NOT verified") {
+		t.Errorf("the version output must keep saying the live API is unverified:\n%s", stdout)
 	}
 }
 

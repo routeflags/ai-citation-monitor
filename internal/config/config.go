@@ -15,6 +15,9 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/routeflags/ai-citation-monitor/internal/domain"
+	"github.com/routeflags/ai-citation-monitor/internal/providers/anthropic"
 )
 
 // Defaults for the values a user does not have to write.
@@ -38,10 +41,23 @@ type ProviderConfig struct {
 	TimeoutSeconds int    `toml:"timeout_seconds"`
 }
 
+// AnthropicConfig is the Claude block. The Messages API requires max_tokens and
+// the server-side web search tool takes max_uses, so both are settings rather
+// than constants (the adapter has the same values as its fallbacks).
+type AnthropicConfig struct {
+	Model          string `toml:"model"`
+	APIKeyEnv      string `toml:"api_key_env"`
+	BaseURL        string `toml:"base_url"`
+	TimeoutSeconds int    `toml:"timeout_seconds"`
+	MaxTokens      int    `toml:"max_tokens"`
+	MaxUses        int    `toml:"max_uses"`
+}
+
 // Providers groups the adapters this build knows about.
 type Providers struct {
-	OpenAI ProviderConfig `toml:"openai"`
-	Gemini ProviderConfig `toml:"gemini"`
+	OpenAI    ProviderConfig  `toml:"openai"`
+	Gemini    ProviderConfig  `toml:"gemini"`
+	Anthropic AnthropicConfig `toml:"anthropic"`
 }
 
 // Limits bounds concurrency, request rate and retries.
@@ -86,20 +102,29 @@ func (c *Config) HasSubdomains() bool {
 	return *c.Subdomains
 }
 
-// Provider returns the block for a provider name (openai / gemini).
+// Provider returns the block for a provider name (openai / gemini / anthropic).
 func (c *Config) Provider(name string) (ProviderConfig, bool) {
 	switch name {
 	case "openai":
 		return c.Providers.OpenAI, true
 	case "gemini":
 		return c.Providers.Gemini, true
+	case "anthropic":
+		// The shared view of the block; the two Claude-only numbers stay available
+		// through c.Providers.Anthropic.
+		return ProviderConfig{
+			Model:          c.Providers.Anthropic.Model,
+			APIKeyEnv:      c.Providers.Anthropic.APIKeyEnv,
+			BaseURL:        c.Providers.Anthropic.BaseURL,
+			TimeoutSeconds: c.Providers.Anthropic.TimeoutSeconds,
+		}, true
 	default:
 		return ProviderConfig{}, false
 	}
 }
 
 // ProviderNames lists the providers this build supports, in a stable order.
-func ProviderNames() []string { return []string{"openai", "gemini"} }
+func ProviderNames() []string { return []string{"openai", "gemini", "anthropic"} }
 
 // Load reads the configuration. A missing file is not an error: it returns the
 // defaults (with Path empty) and a warning so callers can print an actionable
@@ -172,6 +197,21 @@ func (c *Config) ApplyDefaults() {
 	if c.Providers.Gemini.TimeoutSeconds <= 0 {
 		c.Providers.Gemini.TimeoutSeconds = DefaultTimeoutSecond
 	}
+	if c.Providers.Anthropic.APIKeyEnv == "" {
+		c.Providers.Anthropic.APIKeyEnv = "ANTHROPIC_API_KEY"
+	}
+	if c.Providers.Anthropic.BaseURL == "" {
+		c.Providers.Anthropic.BaseURL = "https://api.anthropic.com"
+	}
+	if c.Providers.Anthropic.TimeoutSeconds <= 0 {
+		c.Providers.Anthropic.TimeoutSeconds = DefaultTimeoutSecond
+	}
+	if c.Providers.Anthropic.MaxTokens <= 0 {
+		c.Providers.Anthropic.MaxTokens = anthropic.DefaultMaxTokens
+	}
+	if c.Providers.Anthropic.MaxUses <= 0 {
+		c.Providers.Anthropic.MaxUses = anthropic.DefaultMaxUses
+	}
 }
 
 // Problems lists what prevents a measurement from running. Each entry names the
@@ -186,6 +226,13 @@ func (c *Config) Problems() []string {
 		problems = append(problems, "own_domain is empty (needed to decide whether a citation is yours)")
 	} else if strings.ContainsAny(own, "/:") {
 		problems = append(problems, fmt.Sprintf("own_domain must be a bare host name, got %q", own))
+	} else if domain.IsPublicSuffix(own) {
+		// A public suffix is shared by unrelated organisations (github.io, co.jp), so
+		// treating it as ours would count every customer of that suffix as ours and
+		// inflate the citation rate without limit.
+		problems = append(problems, fmt.Sprintf(
+			"own_domain %q is a public suffix, so every site under it would count as yours; use your registrable domain instead (for a hosted suffix, your own subdomain such as mysite.%s)",
+			own, domain.CanonicalHost(own)))
 	}
 	if strings.TrimSpace(c.Market) == "" {
 		problems = append(problems, "market is empty (the same question in another market is a different measurement)")
@@ -290,6 +337,14 @@ func Save(path string, cfg *Config) error {
 	fmt.Fprintf(&b, "api_key_env = %q\n", cfg.Providers.Gemini.APIKeyEnv)
 	fmt.Fprintf(&b, "base_url = %q\n", cfg.Providers.Gemini.BaseURL)
 	fmt.Fprintf(&b, "timeout_seconds = %d\n\n", cfg.Providers.Gemini.TimeoutSeconds)
+
+	b.WriteString("[providers.anthropic]\n")
+	fmt.Fprintf(&b, "model = %q\n", cfg.Providers.Anthropic.Model)
+	fmt.Fprintf(&b, "api_key_env = %q\n", cfg.Providers.Anthropic.APIKeyEnv)
+	fmt.Fprintf(&b, "base_url = %q\n", cfg.Providers.Anthropic.BaseURL)
+	fmt.Fprintf(&b, "timeout_seconds = %d\n", cfg.Providers.Anthropic.TimeoutSeconds)
+	fmt.Fprintf(&b, "max_tokens = %d  # required; a cut-off answer is an error\n", cfg.Providers.Anthropic.MaxTokens)
+	fmt.Fprintf(&b, "max_uses = %d  # searches one call may run\n\n", cfg.Providers.Anthropic.MaxUses)
 
 	b.WriteString("[limits]\n")
 	fmt.Fprintf(&b, "concurrency = %d\n", cfg.Limits.Concurrency)
