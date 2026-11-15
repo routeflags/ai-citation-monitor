@@ -1,0 +1,25 @@
+# Build output
+/aicm
+/aicm.exe
+/dist/
+
+# Measurements are local data, never committed: the database, the reports and any
+# answer text exported from it.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+measurements/
+reports/
+artifacts/
+*.jsonl
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/

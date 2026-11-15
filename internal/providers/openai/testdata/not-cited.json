@@ -1,0 +1,27 @@
+{
+  "id": "resp_02JTESTNOTCITED",
+  "object": "response",
+  "created_at": 1762560100,
+  "status": "completed",
+  "model": "gpt-test",
+  "output": [
+    {
+      "id": "msg_01JTESTNOTCITED",
+      "type": "message",
+      "role": "assistant",
+      "status": "completed",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "カンナビノイドには多くの種類があり、それぞれ作用が異なります。",
+          "annotations": []
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 900,
+    "output_tokens": 120,
+    "total_tokens": 1020
+  }
+}

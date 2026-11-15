@@ -1,0 +1,64 @@
+version: 2
+
+project_name: ai-citation-monitor
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: aicm
+    main: ./cmd/aicm
+    binary: aicm
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      # Windows on arm64 is not a target for Phase 1.
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X github.com/routeflags/ai-citation-monitor/internal/runner.Build={{ .Version }}
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - LICENSE
+      - README.md
+      - README.ja.md
+      - examples/config.toml
+      - examples/questions.yml
+      - examples/questions.csv
+      - docs/*.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+
+release:
+  draft: false
+  prerelease: auto
+  footer: |
+    These binaries measure a sample through the official provider APIs.
+    The live API path is not verified by CI: no test in this repository calls a
+    provider, and no credential is configured there.

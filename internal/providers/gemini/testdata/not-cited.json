@@ -1,0 +1,21 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "text": "カンナビノイドの研究は現在も進んでおり、結論は定まっていません。"
+          }
+        ]
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 210,
+    "candidatesTokenCount": 64,
+    "totalTokenCount": 274
+  },
+  "modelVersion": "gemini-test"
+}

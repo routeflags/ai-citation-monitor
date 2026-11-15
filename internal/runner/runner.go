@@ -1,0 +1,477 @@
+// Package runner executes a measurement plan: it builds the call list, refuses to
+// repeat a completed call, keeps concurrency and RPM bounded, records every
+// attempt (success, failure or cancellation), and stops spending at the budget.
+package runner
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/routeflags/ai-citation-monitor/internal/costs"
+	"github.com/routeflags/ai-citation-monitor/internal/domain"
+	"github.com/routeflags/ai-citation-monitor/internal/providers"
+	"github.com/routeflags/ai-citation-monitor/internal/storage/sqlite"
+)
+
+// Build is the tool version written into every run (release builds override it).
+var Build = "0.1.0"
+
+// ToolVersion includes the normalisation rules version: together they decide what
+// cited_own and brand_mentioned mean, so records from different versions are not
+// silently compared.
+func ToolVersion() string { return Build + "+norm" + domain.NormalizerVersion }
+
+// Target is one provider/model pair to measure.
+type Target struct {
+	Provider string
+	Model    string
+}
+
+// Item is one planned call.
+type Item struct {
+	Question    sqlite.Question
+	Provider    string
+	Model       string
+	Stage       string
+	Repeat      int
+	PlanKey     string
+	AlreadyDone bool
+}
+
+// Plan is the call list plus the estimate shown before anything is sent.
+type Plan struct {
+	Items         []Item
+	Pending       int
+	AlreadyDone   int
+	Repeat        int
+	Stage         string
+	EstimatedCost float64
+	CostKnown     bool
+	CostBasis     []string
+	Targets       []Target
+	Questions     int
+}
+
+// Runner holds the collaborators of one run.
+type Runner struct {
+	DB          *sqlite.DB
+	ProjectID   int64
+	OwnDomain   string
+	Subdomains  bool
+	BrandTerms  []string
+	Competitors []string
+	Providers   map[string]providers.Provider
+	Estimator   *costs.Estimator
+	BudgetUSD   float64
+	// StartingSpent is the cost already recorded in the database (the CLI reads
+	// it); the budget is about the whole account, not this one invocation.
+	StartingSpent      float64
+	StartingSpentKnown bool
+	Concurrency        int
+	Session            string
+	QuestionSetVersion string
+	QuestionSetSHA256  string
+	Logf               func(format string, args ...any)
+	Now                func() time.Time
+}
+
+func planKey(projectID int64, question sqlite.Question, provider, model string, repeat int, stage, session string) string {
+	hash := sha256.New()
+	fmt.Fprintf(hash, "%d|%d|%s|%s|%s|%d|%s|%s",
+		projectID, question.ID, question.Version, provider, model, repeat, stage, session)
+	return hex.EncodeToString(hash.Sum(nil))[:32]
+}
+
+// BuildPlan enumerates every call and marks the ones already recorded. It does
+// not touch the network.
+func (r *Runner) BuildPlan(ctx context.Context, questions []sqlite.Question, targets []Target, repeat int, stage string, limit int) (*Plan, error) {
+	if repeat <= 0 {
+		repeat = 1
+	}
+	if limit > 0 && limit < len(questions) {
+		questions = questions[:limit]
+	}
+	plan := &Plan{Repeat: repeat, Stage: stage, Targets: targets, Questions: len(questions)}
+	for _, target := range targets {
+		for _, question := range questions {
+			for index := 1; index <= repeat; index++ {
+				key := planKey(r.ProjectID, question, target.Provider, target.Model, index, stage, r.Session)
+				done, err := r.DB.PlanKeySeen(ctx, key)
+				if err != nil {
+					return nil, err
+				}
+				plan.Items = append(plan.Items, Item{
+					Question: question, Provider: target.Provider, Model: target.Model,
+					Stage: stage, Repeat: index, PlanKey: key, AlreadyDone: done,
+				})
+				if done {
+					plan.AlreadyDone++
+				} else {
+					plan.Pending++
+				}
+			}
+		}
+	}
+
+	plan.CostKnown = true
+	seen := map[string]bool{}
+	for _, target := range targets {
+		_, known, basis := r.Estimator.CallEstimate(target.Provider, target.Model)
+		if !seen[basis] {
+			seen[basis] = true
+			plan.CostBasis = append(plan.CostBasis, basis)
+		}
+		if !known {
+			plan.CostKnown = false
+		}
+	}
+	if plan.CostKnown {
+		for _, target := range targets {
+			perCall, known, _ := r.Estimator.CallEstimate(target.Provider, target.Model)
+			if !known {
+				plan.CostKnown = false
+				plan.EstimatedCost = 0
+				break
+			}
+			calls := 0
+			for _, item := range plan.Items {
+				if !item.AlreadyDone && item.Provider == target.Provider && item.Model == target.Model {
+					calls++
+				}
+			}
+			plan.EstimatedCost += perCall * float64(calls)
+		}
+	}
+	return plan, nil
+}
+
+// Summary is what the CLI turns into an exit code and a printed table.
+type Summary struct {
+	Calls             int
+	Success           int
+	Failed            int
+	Cancelled         int
+	Skipped           int
+	NotRun            int
+	TransportFailures int
+	ProviderFailures  int
+	Spent             float64
+	SpentKnown        bool
+	BudgetStopped     bool
+}
+
+// ExitKind classifies the run for the caller's exit code.
+func (s *Summary) ExitKind() string {
+	switch {
+	case s.BudgetStopped:
+		return "budget"
+	case s.Calls > 0 && s.Success == 0 && s.TransportFailures > 0:
+		return "transport"
+	case s.Calls > 0 && s.Failed > 0:
+		return "partial"
+	case s.Cancelled > 0:
+		return "partial"
+	default:
+		return "ok"
+	}
+}
+
+// Execute runs the plan. Every attempt is recorded; a cancellation stops new calls
+// but keeps what already finished.
+func (r *Runner) Execute(ctx context.Context, plan *Plan) (*Summary, error) {
+	summary := &Summary{Skipped: plan.AlreadyDone, SpentKnown: true}
+
+	// Conservative pre-check: if the whole remaining plan provably does not fit,
+	// nothing is sent at all.
+	if r.BudgetUSD > 0 && r.StartingSpentKnown && plan.CostKnown &&
+		r.StartingSpent+plan.EstimatedCost > r.BudgetUSD {
+		summary.BudgetStopped = true
+		summary.NotRun = plan.Pending
+		summary.Spent = r.StartingSpent
+		return summary, nil
+	}
+	if r.BudgetUSD > 0 {
+		summary.Spent = r.StartingSpent
+	}
+
+	workers := r.Concurrency
+	if workers <= 0 {
+		workers = 1
+	}
+
+	var mutex sync.Mutex
+
+	jobs := make(chan Item)
+	var wait sync.WaitGroup
+	for index := 0; index < workers; index++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			for item := range jobs {
+				if ctx.Err() != nil {
+					continue
+				}
+				result := r.executeOne(ctx, item)
+				mutex.Lock()
+				summary.Calls++
+				switch result.status {
+				case providers.StatusSuccess:
+					summary.Success++
+				case providers.StatusCancelled:
+					summary.Cancelled++
+				default:
+					summary.Failed++
+					switch result.errorKind {
+					case providers.ErrorKindTransport:
+						summary.TransportFailures++
+					default:
+						summary.ProviderFailures++
+					}
+				}
+				if result.spentKnown {
+					summary.Spent += result.spent
+				} else {
+					summary.SpentKnown = false
+				}
+				mutex.Unlock()
+			}
+		}()
+	}
+
+	dispatched := 0
+dispatch:
+	for _, item := range plan.Items {
+		if item.AlreadyDone {
+			continue
+		}
+		if ctx.Err() != nil {
+			break
+		}
+		if r.BudgetUSD > 0 {
+			mutex.Lock()
+			spent := summary.Spent
+			known := summary.SpentKnown
+			mutex.Unlock()
+			if known && spent >= r.BudgetUSD {
+				summary.BudgetStopped = true
+				break
+			}
+		}
+		select {
+		case <-ctx.Done():
+			break dispatch
+		case jobs <- item:
+			dispatched++
+		}
+	}
+	close(jobs)
+	wait.Wait()
+
+	pending := plan.Pending
+	if dispatched < pending {
+		summary.NotRun = pending - dispatched
+	}
+	return summary, nil
+}
+
+type oneResult struct {
+	status     string
+	errorKind  string
+	spent      float64
+	spentKnown bool
+}
+
+func (r *Runner) executeOne(ctx context.Context, item Item) oneResult {
+	provider, ok := r.Providers[item.Provider]
+	if !ok {
+		return oneResult{status: providers.StatusError, errorKind: providers.ErrorKindProvider}
+	}
+
+	result, err := provider.Ask(ctx, providers.Request{
+		QuestionKey:  item.Question.Key,
+		QuestionText: item.Question.Text,
+		Model:        item.Model,
+	})
+	if err != nil {
+		result = providers.Result{
+			Status:       providers.StatusError,
+			ErrorKind:    providers.ErrorKindTransport,
+			ErrorCode:    "transport_error",
+			ErrorMessage: err.Error(),
+			StartedAt:    r.now(),
+			CompletedAt:  r.now(),
+		}
+	}
+
+	write := r.buildWrite(item, result)
+	// The record must survive a cancelled context, otherwise Ctrl+C loses evidence.
+	insertCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if _, _, err := r.DB.InsertRun(insertCtx, write); err != nil {
+		if r.Logf != nil {
+			r.Logf("could not record run %s/%s r%d: %v", item.Provider, item.Question.Key, item.Repeat, err)
+		}
+	}
+
+	return oneResult{
+		status:     result.Status,
+		errorKind:  result.ErrorKind,
+		spent:      writeCost(write),
+		spentKnown: write.Usage.CostStatus == costs.StatusEstimated,
+	}
+}
+
+func writeCost(write sqlite.RunWrite) float64 {
+	if write.Usage.EstimatedCost == nil {
+		return 0
+	}
+	return *write.Usage.EstimatedCost
+}
+
+func (r *Runner) buildWrite(item Item, result providers.Result) sqlite.RunWrite {
+	rawURLs := make([]string, 0, len(result.Citations))
+	for _, citation := range result.Citations {
+		rawURLs = append(rawURLs, citation.RawURL)
+	}
+	details := domain.NormalizeCitationDetails(rawURLs, r.OwnDomain, r.Subdomains)
+	citations := make([]sqlite.CitationWrite, 0, len(details))
+	citedOwn := false
+	for _, detail := range details {
+		if detail.IsOwn {
+			citedOwn = true
+		}
+		citations = append(citations, sqlite.CitationWrite{
+			Position:      detail.Position,
+			RawURL:        detail.RawURL,
+			NormalizedURL: detail.NormalizedURL,
+			DedupeKey:     detail.DedupeKey,
+			Hostname:      detail.Domain,
+			SourceType:    sourceType(detail, r.OwnDomain, r.Subdomains, r.Competitors),
+			IsOwn:         detail.IsOwn,
+			Malformed:     detail.Malformed,
+		})
+	}
+
+	costUSD, costKnown, basis := r.Estimator.RunCost(item.Provider, item.Model, result.Usage.InputTokens, result.Usage.OutputTokens)
+	usage := sqlite.UsageWrite{
+		InputTokens:  result.Usage.InputTokens,
+		OutputTokens: result.Usage.OutputTokens,
+		TotalTokens:  result.Usage.TotalTokens,
+		ToolCalls:    result.Usage.ToolCalls,
+		CostCurrency: r.Estimator.Currency,
+	}
+	if costKnown {
+		usage.CostStatus = costs.StatusEstimated
+		usage.EstimatedCost = &costUSD
+		usage.PriceBasis = basis
+	} else {
+		usage.CostStatus = costs.StatusUnknown
+		usage.PriceBasis = basis
+	}
+
+	completed := result.CompletedAt
+	if completed.IsZero() {
+		completed = r.now()
+	}
+	started := result.StartedAt
+	if started.IsZero() {
+		started = r.now()
+	}
+
+	observability := result.Observability
+	if observability == "" {
+		observability = providers.ObservabilityUnknown
+	}
+
+	return sqlite.RunWrite{
+		ProjectID:             r.ProjectID,
+		QuestionID:            item.Question.ID,
+		QuestionVersion:       item.Question.Version,
+		RepeatIndex:           item.Repeat,
+		Provider:              item.Provider,
+		Model:                 item.Model,
+		APIEndpointVersion:    r.Providers[item.Provider].EndpointVersion(),
+		SearchEnabled:         true,
+		Stage:                 item.Stage,
+		QuestionSetVersion:    r.QuestionSetVersion,
+		QuestionSetSHA256:     r.QuestionSetSHA256,
+		PlanKey:               item.PlanKey,
+		Session:               r.Session,
+		StartedAtUTC:          started.UTC().Format("2006-01-02T15:04:05Z"),
+		CompletedAtUTC:        completed.UTC().Format("2006-01-02T15:04:05Z"),
+		Status:                result.Status,
+		CitationObservability: observability,
+		CitedOwn:              result.Status == providers.StatusSuccess && citedOwn,
+		CitationCount:         len(citations),
+		BrandMentioned:        result.Status == providers.StatusSuccess && domain.BrandMentioned(result.AnswerText, r.BrandTerms),
+		ToolVersion:           ToolVersion(),
+		AnswerText:            result.AnswerText,
+		AnswerSHA256:          sha256Hex(result.AnswerText),
+		RawResponseJSON:       string(result.RawJSON),
+		ErrorCode:             result.ErrorCode,
+		ErrorMessage:          result.ErrorMessage,
+		Citations:             citations,
+		Mentions:              brandMentions(result.AnswerText, r.BrandTerms),
+		Usage:                 usage,
+	}
+}
+
+func sourceType(detail domain.CitationDetail, ownDomain string, subdomains bool, competitors []string) string {
+	if detail.Malformed || detail.Domain == nil {
+		return "unknown"
+	}
+	switch domain.ClassifyDomain(*detail.Domain, ownDomain, subdomains, competitors) {
+	case "own":
+		return "own"
+	case "competitor":
+		return "competitor"
+	default:
+		return "other"
+	}
+}
+
+func sha256Hex(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+
+// brandMentions records which brand terms hit the answer. A term shorter than
+// three characters cannot be attributed (it is likely to be a common word), so it
+// is marked ambiguous and excluded from the mention rate.
+func brandMentions(answerText string, terms []string) []sqlite.MentionWrite {
+	normalized := domain.NormalizeText(answerText)
+	if normalized == "" {
+		return nil
+	}
+	mentions := make([]sqlite.MentionWrite, 0, len(terms))
+	for _, term := range terms {
+		needle := domain.NormalizeText(term)
+		if needle == "" {
+			continue
+		}
+		occurrences := strings.Count(normalized, needle)
+		if occurrences == 0 {
+			continue
+		}
+		mentions = append(mentions, sqlite.MentionWrite{
+			Term:        term,
+			Kind:        "brand",
+			MatchedText: needle,
+			Occurrences: occurrences,
+			Ambiguous:   len([]rune(needle)) < 3,
+		})
+	}
+	return mentions
+}
+
+func (r *Runner) now() time.Time {
+	if r.Now != nil {
+		return r.Now().UTC()
+	}
+	return time.Now().UTC()
+}

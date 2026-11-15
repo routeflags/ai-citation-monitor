@@ -1,0 +1,45 @@
+# Question set (example).
+#
+# The question set is the expectation contract: changing a question text changes
+# what "the same measurement" means, so raise set_version when you do it.
+# Import it with: aicm questions import --file examples/questions.yml
+
+set_version: "1.0.0"
+site_id: example-shop
+
+# A citation counts as own when its host is this, or ends with ".<own_domain>"
+# (subdomains: true). Set subdomains: false to require an exact match.
+own_domain: example.shop
+subdomains: true
+
+market: ja-JP
+language: en
+
+# brand_terms_status: proposed | confirmed. "proposed" means the words are a
+# guess and the report keeps saying so.
+brand_terms_status: proposed
+brand_terms:
+  - Example
+
+competitors:
+  - rival.example
+
+# categories: definition / comparison / regulation / effect / safety / usage /
+# purchase / list / identification / dosage
+questions:
+  - { id: Q01, text: "What is Example Shop?", category: definition }
+  - { id: Q02, text: "How does Example compare with Rival?", category: comparison }
+  - { id: Q03, text: "Where can I buy Example products?", category: purchase }
+  - { id: Q04, text: "Is Example available in Japan?", category: regulation }
+  - { id: Q05, text: "What do customers say about Example?", category: effect }
+  - { id: Q06, text: "How do I contact Example support?", category: usage }
+
+# Stages are the execution sizes. runs_per_question must be 1..5.
+# smoke is a subset of initial, and initial of regular.
+stages:
+  smoke:
+    runs_per_question: 1
+    question_ids: [Q01, Q02, Q03, Q04, Q05]
+  initial:
+    runs_per_question: 3
+    question_ids: [Q01, Q02, Q03, Q04, Q05, Q06]

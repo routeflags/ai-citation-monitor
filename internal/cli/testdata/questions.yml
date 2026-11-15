@@ -1,0 +1,17 @@
+# A minimal question-set contract used by the CLI tests.
+set_version: "1.0.0"
+site_id: demo
+own_domain: example.shop
+market: ja-JP
+language: ja
+brand_terms:
+  - Example
+competitors:
+  - rival.example
+questions:
+  - { id: Q01, text: "THCVとTHCの違いは？", category: comparison }
+  - { id: Q02, text: "THCHとは何ですか？", category: definition }
+stages:
+  smoke:
+    runs_per_question: 1
+    question_ids: [Q01, Q02]

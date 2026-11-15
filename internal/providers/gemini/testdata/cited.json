@@ -1,0 +1,52 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "text": "HHBDは合成カンナビノイドの一つで、日本では指定薬物として規制されています。研究では依存性や健康影響が報告されています。"
+          }
+        ]
+      },
+      "finishReason": "STOP",
+      "groundingMetadata": {
+        "webSearchQueries": [
+          "HHBD とは",
+          "HHBD 成分 規制"
+        ],
+        "groundingChunks": [
+          {
+            "web": {
+              "uri": "https://thch-vape.shop/blog/hhbd",
+              "title": "HHBDとは何か"
+            }
+          },
+          {
+            "web": {
+              "uri": "https://example.org/studies/hhbd",
+              "title": "Synthetic cannabinoids: a review"
+            }
+          }
+        ],
+        "groundingSupports": [
+          {
+            "segment": {
+              "startIndex": 0,
+              "endIndex": 58,
+              "text": "HHBDは合成カンナビノイドの一つで、日本では指定薬物として規制されています。"
+            },
+            "groundingChunkIndices": [0],
+            "confidenceScores": [0.94]
+          }
+        ]
+      }
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 740,
+    "candidatesTokenCount": 180,
+    "totalTokenCount": 920
+  },
+  "modelVersion": "gemini-test"
+}

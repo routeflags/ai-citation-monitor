@@ -1,0 +1,68 @@
+{
+  "id": "resp_01JTESTCITED",
+  "object": "response",
+  "created_at": 1762560000,
+  "status": "completed",
+  "model": "gpt-test",
+  "output": [
+    {
+      "id": "ws_01JTESTCITED",
+      "type": "web_search_call",
+      "status": "completed",
+      "action": {
+        "type": "search",
+        "query": "THCVとTHCの違い"
+      }
+    },
+    {
+      "id": "msg_01JTESTCITED",
+      "type": "message",
+      "role": "assistant",
+      "status": "completed",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "THCVとTHCはどちらもカンナビノイドですが、作用と法的な扱いが異なります。THCVは食欲を抑える方向に働くという報告があります。",
+          "annotations": [
+            {
+              "type": "url_citation",
+              "url": "https://thch-vape.shop/blog/thcv-vs-thc",
+              "title": "THCVとTHCの違い",
+              "start_index": 0,
+              "end_index": 46
+            },
+            {
+              "type": "url_citation",
+              "url": "https://thch-vape.shop/blog/thcv-vs-thc?utm_source=chatgpt.com",
+              "title": "THCVとTHCの違い",
+              "start_index": 0,
+              "end_index": 46
+            },
+            {
+              "type": "url_citation",
+              "url": "https://example.org/study/thcv-appetite",
+              "title": "THCV and appetite: a review",
+              "start_index": 46,
+              "end_index": 90
+            },
+            {
+              "type": "url_citation",
+              "url": "mailto:press@example.org",
+              "title": "press contact",
+              "start_index": 90,
+              "end_index": 110
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 1234,
+    "output_tokens": 456,
+    "total_tokens": 1690,
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}
