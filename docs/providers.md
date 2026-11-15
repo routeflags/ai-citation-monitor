@@ -79,14 +79,13 @@ Notes:
 
 ## Cost
 
-- Prices are configured per `provider/model` under `[pricing."..."]`. They are
-  used only for the estimate and the reported cost.
-- `input_tokens_per_call` / `output_tokens_per_call` make the pre-run estimate
-  possible. Without them, or without a price entry, the estimate is `unknown` and
-  the tool says so instead of showing zero.
-- The budget stop is a conservative upper bound, not a guarantee: the provider
-  bills on its side, and a retried request can be charged twice. The tool says this
-  in its output.
+- The tool does not price a call. It records the tokens and tool calls the
+  provider reported (`usage_records`), because those are measurements the provider
+  made, and leaves the money to the provider's own billing dashboard.
+- A run is bounded by its plan (questions x repeats x providers), which `--limit`
+  and `--dry-run` let you check before anything is sent.
+- A retried request can be charged twice by the provider; the run output counts
+  the retries it made.
 
 ## Adding a provider
 

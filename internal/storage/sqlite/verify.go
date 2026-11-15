@@ -183,25 +183,6 @@ func issueDetail(kind string) string {
 	}
 }
 
-// SumCost totals the estimated cost recorded so far. known is false when any run
-// has an unknown cost, because then the sum is a lower bound, not a total.
-func (d *DB) SumCost(ctx context.Context) (total float64, known bool, err error) {
-	var sum sql.NullFloat64
-	if err := d.sql.QueryRowContext(ctx,
-		`SELECT SUM(estimated_cost) FROM usage_records`).Scan(&sum); err != nil {
-		return 0, false, err
-	}
-	if sum.Valid {
-		total = sum.Float64
-	}
-	var unknown int
-	if err := d.sql.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM usage_records WHERE cost_status = 'unknown'`).Scan(&unknown); err != nil {
-		return total, false, err
-	}
-	return total, unknown == 0, nil
-}
-
 // LatestQuestionSet returns the most recently imported question set provenance.
 func (d *DB) LatestQuestionSet(ctx context.Context, projectID int64) (version, sha string, err error) {
 	row := d.sql.QueryRowContext(ctx,

@@ -44,23 +44,8 @@ api_key_env = "GEMINI_API_KEY"
 base_url = "https://generativelanguage.googleapis.com/v1beta"
 timeout_seconds = 90
 
-[budget]
-# 0 means "no limit". The estimate is only computed when a price entry exists
-# below; otherwise the run says "unknown" instead of pretending it is free.
-max_usd = 0
-currency = "USD"
-
 [limits]
 concurrency = 2
 rpm = 20
 # 3 by default. Set -1 to disable retries entirely.
 max_retries = 3
-
-# Token prices used ONLY for the cost estimate. Remove an entry and the estimate
-# becomes "unknown" (never zero). input_tokens_per_call / output_tokens_per_call
-# are needed to show an estimate before the first call.
-[pricing."openai/<model>"]
-input_usd_per_mtok = 0
-output_usd_per_mtok = 0
-input_tokens_per_call = 0
-output_tokens_per_call = 0

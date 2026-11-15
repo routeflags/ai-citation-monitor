@@ -44,12 +44,6 @@ type Providers struct {
 	Gemini ProviderConfig `toml:"gemini"`
 }
 
-// Budget bounds spending. MaxUSD = 0 means "not set".
-type Budget struct {
-	MaxUSD   float64 `toml:"max_usd"`
-	Currency string  `toml:"currency"`
-}
-
 // Limits bounds concurrency, request rate and retries.
 type Limits struct {
 	Concurrency int `toml:"concurrency"`
@@ -60,14 +54,6 @@ type Limits struct {
 // ReportSettings controls the generated report.
 type ReportSettings struct {
 	Language string `toml:"language"`
-}
-
-// Price is the token price table entry for one provider/model.
-type Price struct {
-	InputPerMTok        float64 `toml:"input_usd_per_mtok"`
-	OutputPerMTok       float64 `toml:"output_usd_per_mtok"`
-	InputTokensPerCall  int     `toml:"input_tokens_per_call"`
-	OutputTokensPerCall int     `toml:"output_tokens_per_call"`
 }
 
 // Config is one site's configuration.
@@ -84,11 +70,9 @@ type Config struct {
 	BrandTerms  []string `toml:"brand_terms"`
 	Competitors []string `toml:"competitors"`
 
-	Report    ReportSettings   `toml:"report"`
-	Providers Providers        `toml:"providers"`
-	Budget    Budget           `toml:"budget"`
-	Limits    Limits           `toml:"limits"`
-	Pricing   map[string]Price `toml:"pricing"`
+	Report    ReportSettings `toml:"report"`
+	Providers Providers      `toml:"providers"`
+	Limits    Limits         `toml:"limits"`
 
 	// Path is the file this config came from ("" when it was not found).
 	Path string `toml:"-"`
@@ -166,9 +150,6 @@ func (c *Config) ApplyDefaults() {
 	// 0 means "not set": three retries. Set -1 to disable retries entirely.
 	if c.Limits.MaxRetries == 0 {
 		c.Limits.MaxRetries = DefaultMaxRetries
-	}
-	if c.Budget.Currency == "" {
-		c.Budget.Currency = "USD"
 	}
 	if c.Report.Language == "" {
 		c.Report.Language = "en"
@@ -310,37 +291,10 @@ func Save(path string, cfg *Config) error {
 	fmt.Fprintf(&b, "base_url = %q\n", cfg.Providers.Gemini.BaseURL)
 	fmt.Fprintf(&b, "timeout_seconds = %d\n\n", cfg.Providers.Gemini.TimeoutSeconds)
 
-	b.WriteString("[budget]\n")
-	fmt.Fprintf(&b, "max_usd = %g\n", cfg.Budget.MaxUSD)
-	fmt.Fprintf(&b, "currency = %q\n\n", cfg.Budget.Currency)
-
 	b.WriteString("[limits]\n")
 	fmt.Fprintf(&b, "concurrency = %d\n", cfg.Limits.Concurrency)
 	fmt.Fprintf(&b, "rpm = %d\n", cfg.Limits.RPM)
 	fmt.Fprintf(&b, "max_retries = %d\n\n", cfg.Limits.MaxRetries)
-
-	if len(cfg.Pricing) > 0 {
-		b.WriteString("# Token prices, used only for the cost estimate. Remove an entry and the\n")
-		b.WriteString("# estimate becomes `unknown` instead of zero.\n")
-		keys := make([]string, 0, len(cfg.Pricing))
-		for key := range cfg.Pricing {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			price := cfg.Pricing[key]
-			fmt.Fprintf(&b, "[pricing.%q]\n", key)
-			fmt.Fprintf(&b, "input_usd_per_mtok = %g\n", price.InputPerMTok)
-			fmt.Fprintf(&b, "output_usd_per_mtok = %g\n", price.OutputPerMTok)
-			if price.InputTokensPerCall > 0 {
-				fmt.Fprintf(&b, "input_tokens_per_call = %d\n", price.InputTokensPerCall)
-			}
-			if price.OutputTokensPerCall > 0 {
-				fmt.Fprintf(&b, "output_tokens_per_call = %d\n", price.OutputTokensPerCall)
-			}
-			b.WriteString("\n")
-		}
-	}
 
 	return os.WriteFile(path, []byte(b.String()), 0o644)
 }

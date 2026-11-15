@@ -7,7 +7,7 @@ cmd/aicm            main(): os.Exit(cli.Execute())
 internal/cli        command tree, exit codes, output routing
 internal/config     aicm.toml (TOML), defaults, validation, warnings
 internal/question   question-set inputs (YAML contract, CSV)
-internal/runner     plan, resume, concurrency, budget, record every attempt
+internal/runner     plan, resume, concurrency, record every attempt
 internal/providers  provider interface + Result
   internal/providers/httpclient   the only package that dials the network
   internal/providers/openai       Responses API + web_search
@@ -17,7 +17,6 @@ internal/storage/sqlite  migrations, append-only writes, reads, integrity checks
 internal/analysis   the only definition of every rate (groups, coverage, share, trends)
 internal/reporting  Markdown report + file naming (bilingual labels)
 internal/export     CSV / JSON / JSONL
-internal/costs      price table, estimate, budget decision
 internal/i18n       English / Japanese presentation strings
 migrations          embedded SQL, applied in order, tracked in schema_migrations
 ```
@@ -34,7 +33,6 @@ aicm run
   -> storage.Open           (migrations, project row)
   -> runner.BuildPlan       (question x provider/model x repeat; skip recorded plan keys)
   -> auth check             (environment variable per provider; nothing sent when missing)
-  -> budget check           (estimate before the first call, and again while running)
   -> runner.Execute         (bounded concurrency, one attempt per call)
        -> providers/httpclient.Do   (timeout, RPM, retry on 429/5xx only)
        -> provider adapter          (request shape, citation metadata, usage)
@@ -80,10 +78,10 @@ was created by an older build.
 | `question_sets` | provenance of an imported question set (version, sha256, path) |
 | `competitors` | competitor domains, applied at report time |
 | `runs` | one attempted call: conditions, plan key, status, observability, counts |
-| `responses` | answer text, its sha256, the sanitised raw JSON, usage, cost |
+| `responses` | answer text, its sha256, the sanitised raw JSON, usage |
 | `citations` | raw URL, normalised URL, dedupe key, host, source type, malformed flag |
 | `mentions` | brand terms that hit the answer, with occurrences and an ambiguity flag |
-| `usage_records` | tokens, tool calls, cost status/currency/estimate, price basis |
+| `usage_records` | tokens and tool calls the provider reported (no cost) |
 | `v_runs_valid` | `SELECT * FROM runs WHERE status = 'success'` — the denominator |
 
 ### Append-only

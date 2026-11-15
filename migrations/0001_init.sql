@@ -124,14 +124,11 @@ CREATE TABLE IF NOT EXISTS responses (
     citation_observability TEXT NOT NULL CHECK (citation_observability IN ('observed', 'unknown')),
     error_code            TEXT NOT NULL DEFAULT '',
     error_message         TEXT NOT NULL DEFAULT '',
-    input_tokens          INTEGER,
-    output_tokens         INTEGER,
-    tool_usage            TEXT NOT NULL DEFAULT '',
-    estimated_cost        REAL,
-    cost_currency         TEXT NOT NULL DEFAULT '',
-    cost_status           TEXT NOT NULL CHECK (cost_status IN ('estimated', 'unknown')),
-    created_at            TEXT NOT NULL
-);
+    	input_tokens          INTEGER,
+    	output_tokens         INTEGER,
+    	tool_usage            TEXT NOT NULL DEFAULT '',
+    	created_at            TEXT NOT NULL
+    );
 
 -- One row per cited URL. raw_url keeps what the provider returned;
 -- normalized_url / dedupe_key / hostname are derived. Malformed URLs are kept
@@ -165,22 +162,19 @@ CREATE TABLE IF NOT EXISTS mentions (
     UNIQUE (response_id, term, kind)
 );
 
--- Cost / usage per run. Tokens are NULL when the provider did not report them
--- (never filled in by guessing). cost_status = unknown is not zero cost.
+-- Usage reported by the provider per run. Tokens are NULL when the provider did
+-- not report them (never filled in by guessing). This tool does not price a call:
+-- there is no cost column, by owner decision (see the decision record).
 CREATE TABLE IF NOT EXISTS usage_records (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_id         INTEGER NOT NULL UNIQUE REFERENCES runs(id),
-    provider       TEXT NOT NULL,
-    model          TEXT NOT NULL,
-    input_tokens   INTEGER,
-    output_tokens  INTEGER,
-    total_tokens   INTEGER,
-    tool_calls     INTEGER,
-    cost_status    TEXT NOT NULL CHECK (cost_status IN ('estimated', 'unknown')),
-    cost_currency  TEXT NOT NULL DEFAULT 'USD',
-    estimated_cost REAL,
-    price_basis    TEXT NOT NULL DEFAULT '',
-    created_at     TEXT NOT NULL
+	id             INTEGER PRIMARY KEY AUTOINCREMENT,
+	run_id         INTEGER NOT NULL UNIQUE REFERENCES runs(id),
+	provider       TEXT NOT NULL,
+	model          TEXT NOT NULL,
+	input_tokens   INTEGER,
+	output_tokens  INTEGER,
+	total_tokens   INTEGER,
+	tool_calls     INTEGER,
+	created_at     TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_runs_period ON runs (started_at_utc);

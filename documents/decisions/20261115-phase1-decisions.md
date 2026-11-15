@@ -6,7 +6,7 @@
 | 版 | 2.0 |
 | 入力（正本） | `routeflags/ai-citation-monitor#1`（仕様 issue）、`documents/20261115.md`（Go 開発指示書。**改変しない**） |
 | 参照（読み取り専用） | `routeflags/seo-operations` `290d6ea` の `scripts/geo/`（意味の参照のみ。語彙・Python 資産は持ち込まない） |
-| 状態 | D1〜D10 すべて決定済み |
+| 状態 | D1〜D11 すべて決定済み |
 
 ---
 
@@ -78,10 +78,10 @@
 |---|---|
 | `projects` / `questions` / `question_versions` / `competitors` | 採用 |
 | `runs` | 採用。条件（provider / model / api_endpoint_version / search_enabled / measurement_method / question_set_version / question_set_sha256 / started_at / completed_at）を併記 |
-| `responses` | 採用。`answer_text`・`answer_sha256`・`raw_response_json`（認証情報を除去）・`citation_observability`・`error_code`/`error_message`・usage 列・`estimated_cost`/`cost_currency`/`cost_status` |
+| `responses` | 採用。`answer_text`・`answer_sha256`・`raw_response_json`（認証情報を除去）・`citation_observability`・`error_code`/`error_message`・usage 列（費用列は D11 で削除） |
 | `citations` | 採用。`raw_url` / `normalized_url` / `hostname` / `source_type` / `position` / `is_own` / `malformed`（`response_id` で responses に紐づく） |
 | `mentions` | 採用。`term` / `kind` / `occurrences` / `ambiguous` |
-| `usage_records` | 採用。トークン・ツール呼び出し・`price_basis`・`cost_status` |
+| `usage_records` | 採用。プロバイダーが申告したトークン・ツール呼び出しのみ（D11） |
 | （追加）`question_sets` | 質問セットの由来（版・sha256・パス）を残すため追加 |
 | （追加）`runs.plan_key` | 「同じ呼び出しを二度課金しない」ための一意キー（後述） |
 
@@ -128,7 +128,36 @@
 
 ---
 
-## 付記 A. 終了コード（指示書 §4 の 0–5 をそのまま採用）
+## D11. 費用・予算機能は持たない【オーナー判断 2026-11-15】
+
+オーナー判断: 「コスト機能が不要」。指示書 §3.9 の「予算上限」と §8 の予算制御は、
+このツールの責務から外す。
+
+破棄した内容:
+
+- `internal/costs`（価格表・概算・予算判定）
+- 設定の `[budget]`（`max_usd` / `currency`）と `[pricing."provider/model"]`
+- DB の費用列（`responses.estimated_cost` / `cost_currency` / `cost_status`、
+  `usage_records.cost_status` / `cost_currency` / `estimated_cost` / `price_basis`）
+- 終了コード 5（予算停止）と `budget_exceeded` / `budget_stopped` の reason
+- 実行前の費用表示、`export` の `estimated_cost` / `cost_status` 列
+
+残したもの:
+
+- `usage_records` のトークン数・ツール呼び出し（プロバイダーが申告した実測値。
+  費用ではないので残す）
+- 実行の大きさは計画（質問数 × repeat × プロバイダー）で決まり、`--limit` と
+  `--dry-run` で送信前に確認できる
+- リトライ回数は実行結果に件数として出る（二重課金の可能性はプロバイダー側の
+  請求で確認する）
+
+理由: 価格表はモデル改定のたびに古くなり、`unknown` だらけの概算を出すより、
+ツールは「測ったこと」だけを持ち、金額はプロバイダーの請求画面に任せる方が
+誤解が少ない。この判断で指示書の完了条件から予算管理が外れる（決定記録が優先）。
+
+---
+
+## 付記 A. 終了コード（指示書 §4 の 0–5 から、D11 で 5 を削除）
 
 | コード | 意味 | 代表的な `reason` |
 |---|---|---|
@@ -137,7 +166,6 @@
 | 2 | 設定・使い方 | `config_incomplete` / `config_invalid` / `model_missing` / `questions_missing` / `usage` |
 | 3 | 認証なし（1 回も送っていない） | `auth_missing` |
 | 4 | API・通信の失敗 | `api_failure` / `run_failed` |
-| 5 | 予算停止 | `budget_exceeded`（開始前）/ `budget_stopped`（実行中） |
 
 `--json` では `{"error":{"code":3,"reason":"auth_missing","message":"..."}}`。
 

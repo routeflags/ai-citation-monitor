@@ -20,7 +20,6 @@ English: [README.md](README.md).
 | OpenAI アダプター（Responses API + `web_search`） | **実装済み・実 API 未検証**。形は公開ドキュメントと、採取済み応答の構造を写した fixture に基づく。テストは `httptest` |
 | Gemini アダプター（`generateContent` + `google_search`） | **実装済み・実 API 未検証**。同上 |
 | 引用メタデータからの抽出 | **検証済み**（cited / not-cited / error / empty / メタデータなし の fixture） |
-| 費用推定と予算停止 | **検証済み**（価格表がある場合）。価格が無ければ `unknown`（ゼロ扱いしない） |
 | リトライ（429/502/503/504・`Retry-After`）・レート制限・並列・Ctrl+C 再開 | **検証済み**（単体テスト） |
 | 実 API での計測 | **行っていない**。課金と認証が必要なため、オーナーの明示判断があるときだけ行う |
 
@@ -79,7 +78,6 @@ aicm verify
 | 2 | 設定・使い方の誤り |
 | 3 | 認証が無い（1 回も送っていない） |
 | 4 | API・通信の失敗 |
-| 5 | 予算による停止 |
 
 失敗には機械可読な `reason` も付く（`--json` の `error.reason`）。
 

@@ -7,8 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/routeflags/ai-citation-monitor/internal/config"
-	"github.com/routeflags/ai-citation-monitor/internal/costs"
 	"github.com/routeflags/ai-citation-monitor/internal/providers"
 	"github.com/routeflags/ai-citation-monitor/internal/storage/sqlite"
 )
@@ -65,9 +63,6 @@ func setup(t *testing.T) (*Runner, sqlite.Question, *sqlite.DB) {
 	engine := &Runner{
 		DB: db, ProjectID: project.ID, OwnDomain: "example.shop", Subdomains: true,
 		BrandTerms: []string{"Example"}, Concurrency: 2, Session: "2026-11-15",
-		Estimator: costs.New(map[string]config.Price{
-			"fake/model": {InputPerMTok: 1, OutputPerMTok: 1},
-		}, "USD"),
 		QuestionSetVersion: "1.0.0", QuestionSetSHA256: "sha",
 		Now: func() time.Time { return time.Date(2026, 11, 15, 1, 0, 0, 0, time.UTC) },
 	}
@@ -149,60 +144,6 @@ func TestCancellationStopsNewCallsAndKeepsTheRest(t *testing.T) {
 	}
 	if len(runs) > 0 && len(runs) > 4 {
 		t.Fatalf("recorded more runs than planned: %d", len(runs))
-	}
-}
-
-func TestBudgetStopMarksTheRemainder(t *testing.T) {
-	engine, question, _ := setup(t)
-	fake := &fakeProvider{name: "fake", result: successResult()}
-	engine.Providers = map[string]providers.Provider{"fake": fake}
-	// One call is priced at 0.0015 USD; the budget only allows a fraction of one.
-	engine.BudgetUSD = 0.0001
-	engine.StartingSpentKnown = true
-	engine.Estimator = costs.New(map[string]config.Price{
-		"fake/model": {InputPerMTok: 1, OutputPerMTok: 1, InputTokensPerCall: 1000, OutputTokensPerCall: 500},
-	}, "USD")
-	targets := []Target{{Provider: "fake", Model: "model"}}
-
-	plan, err := engine.BuildPlan(context.Background(), []sqlite.Question{question}, targets, 3, "smoke", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	summary, err := engine.Execute(context.Background(), plan)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !summary.BudgetStopped {
-		t.Fatalf("the budget stop was not reported: %+v", summary)
-	}
-	if summary.ExitKind() != "budget" {
-		t.Fatalf("exit kind = %s", summary.ExitKind())
-	}
-	if summary.NotRun == 0 {
-		t.Fatalf("the calls that were not sent must be counted: %+v", summary)
-	}
-}
-
-func TestUnknownCostIsNotZero(t *testing.T) {
-	engine, question, _ := setup(t)
-	fake := &fakeProvider{name: "fake", result: successResult()}
-	engine.Providers = map[string]providers.Provider{"fake": fake}
-	engine.Estimator = costs.New(nil, "USD")
-	targets := []Target{{Provider: "fake", Model: "model"}}
-
-	plan, err := engine.BuildPlan(context.Background(), []sqlite.Question{question}, targets, 1, "smoke", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan.CostKnown {
-		t.Fatal("a plan without prices must not claim a known cost")
-	}
-	summary, err := engine.Execute(context.Background(), plan)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if summary.SpentKnown {
-		t.Fatal("a run without a price must not be counted as a known cost")
 	}
 }
 

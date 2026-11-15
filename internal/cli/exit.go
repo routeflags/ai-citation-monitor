@@ -7,16 +7,15 @@ import (
 	"io"
 )
 
-// Exit codes. They collapse the instruction's 0..5 ladder into the five meanings
-// this tool can actually distinguish, and every failure also carries a machine
-// readable Reason.
+// Exit codes. 0..4 are the meanings this tool can distinguish; there is no cost
+// or budget stop (the tool does not price a call), so 5 is not used. Every failure
+// also carries a machine readable Reason.
 const (
 	ExitOK      = 0
 	ExitGeneral = 1 // validation failed, partial failure, evidence problem
 	ExitConfig  = 2 // configuration / usage
 	ExitAuth    = 3 // credential missing (nothing was sent)
 	ExitAPI     = 4 // API or transport failure
-	ExitBudget  = 5 // budget stop
 )
 
 // ExitError carries both the process exit code and a stable reason string.

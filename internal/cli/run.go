@@ -13,7 +13,6 @@ import (
 
 	"github.com/routeflags/ai-citation-monitor/internal/analysis"
 	"github.com/routeflags/ai-citation-monitor/internal/config"
-	"github.com/routeflags/ai-citation-monitor/internal/costs"
 	"github.com/routeflags/ai-citation-monitor/internal/providers"
 	"github.com/routeflags/ai-citation-monitor/internal/providers/gemini"
 	"github.com/routeflags/ai-citation-monitor/internal/providers/httpclient"
@@ -192,11 +191,6 @@ func (a *App) runMeasure(cmd *cobra.Command, opts runOptions) error {
 		rpm = cfg.Limits.RPM
 	}
 
-	spent, spentKnown, err := db.SumCost(ctx)
-	if err != nil {
-		return failf(ExitConfig, "db_unavailable", "%v", err)
-	}
-
 	setVersion, setSHA, err := db.LatestQuestionSet(ctx, project.ID)
 	if err != nil {
 		return failf(ExitConfig, "db_unavailable", "%v", err)
@@ -209,10 +203,6 @@ func (a *App) runMeasure(cmd *cobra.Command, opts runOptions) error {
 		Subdomains:         project.Subdomains,
 		BrandTerms:         cfg.BrandTerms,
 		Competitors:        cfg.Competitors,
-		Estimator:          costs.New(cfg.Pricing, cfg.Budget.Currency),
-		BudgetUSD:          cfg.Budget.MaxUSD,
-		StartingSpent:      spent,
-		StartingSpentKnown: spentKnown,
 		Concurrency:        concurrency,
 		Session:            session,
 		QuestionSetVersion: setVersion,
@@ -237,34 +227,17 @@ func (a *App) runMeasure(cmd *cobra.Command, opts runOptions) error {
 		}
 		fmt.Fprintf(a.Out, "condition: stage=%s repeat=%d session=%s\n", nonEmpty(opts.stage, "(none)"), opts.repeat, session)
 		fmt.Fprintf(a.Out, "calls:     %d planned, %d already recorded (skipped)\n", plan.Pending, plan.AlreadyDone)
-		fmt.Fprintf(a.Out, "estimate:  %s\n", estimateText(plan, cfg.Budget.Currency))
-		fmt.Fprintf(a.Out, "budget:    %s\n", budgetText(cfg.Budget.MaxUSD, cfg.Budget.Currency, spent, spentKnown))
 	}
 
 	if opts.dryRun {
 		if a.JSON {
 			return a.PrintJSON(map[string]any{
 				"dry_run": true, "planned_calls": plan.Pending, "already_done": plan.AlreadyDone,
-				"estimate_usd": plan.EstimatedCost, "estimate_known": plan.CostKnown,
-				"budget_usd": cfg.Budget.MaxUSD, "spent_usd": spent,
 				"session": session, "targets": targets, "missing_credentials": missingEnvNames(missing),
 			})
 		}
 		fmt.Fprintln(a.Out, "dry-run: nothing was sent")
 		return nil
-	}
-
-	if cfg.Budget.MaxUSD > 0 {
-		remaining := costs.Remaining(cfg.Budget.MaxUSD, spent)
-		if !costs.Allows(cfg.Budget.MaxUSD, spent, plan.EstimatedCost, plan.CostKnown) {
-			return failf(ExitBudget, "budget_exceeded",
-				"the estimate %s exceeds the remaining budget %s%.2f; nothing was sent",
-				estimateText(plan, cfg.Budget.Currency), currencySymbol(cfg.Budget.Currency), remaining)
-		}
-		if !plan.CostKnown {
-			fmt.Fprintf(a.Err, "warning: the cost is unknown (no price for this model), so the budget cannot be enforced exactly; remaining %s%.2f\n",
-				currencySymbol(cfg.Budget.Currency), remaining)
-		}
 	}
 
 	if !opts.yes {
@@ -289,8 +262,7 @@ func (a *App) runMeasure(cmd *cobra.Command, opts runOptions) error {
 		payload := map[string]any{
 			"calls": summary.Calls, "success": summary.Success, "failed": summary.Failed,
 			"cancelled": summary.Cancelled, "skipped": summary.Skipped, "not_run": summary.NotRun,
-			"spent_usd": summary.Spent, "spent_known": summary.SpentKnown,
-			"budget_stopped": summary.BudgetStopped, "exit_kind": summary.ExitKind(),
+			"exit_kind": summary.ExitKind(),
 		}
 		if err := a.PrintJSON(payload); err != nil {
 			return err
@@ -298,13 +270,9 @@ func (a *App) runMeasure(cmd *cobra.Command, opts runOptions) error {
 	} else {
 		fmt.Fprintf(a.Out, "run: calls=%d success=%d failed=%d cancelled=%d skipped=%d not_run=%d\n",
 			summary.Calls, summary.Success, summary.Failed, summary.Cancelled, summary.Skipped, summary.NotRun)
-		fmt.Fprintf(a.Out, "cost: %s\n", spentText(summary.Spent, summary.SpentKnown, cfg.Budget.Currency))
 	}
 
 	switch summary.ExitKind() {
-	case "budget":
-		return failf(ExitBudget, "budget_stopped",
-			"stopped at the budget after %d calls; %d calls were not sent", summary.Calls, summary.NotRun)
 	case "transport":
 		return failf(ExitAPI, "api_failure",
 			"every call failed at the transport level; see the error_code column (records were kept)")
@@ -382,40 +350,6 @@ func validStage(stage string) bool {
 	default:
 		return false
 	}
-}
-
-func estimateText(plan *runner.Plan, currency string) string {
-	if !plan.CostKnown {
-		basis := strings.Join(plan.CostBasis, "; ")
-		if basis == "" {
-			basis = "no price configured"
-		}
-		return "unknown (" + basis + ")"
-	}
-	return fmt.Sprintf("%s%.2f for %d calls", currencySymbol(currency), plan.EstimatedCost, plan.Pending)
-}
-
-func budgetText(maxUSD float64, currency string, spent float64, spentKnown bool) string {
-	if maxUSD <= 0 {
-		return "none (no limit set)"
-	}
-	spentTextValue := spentText(spent, spentKnown, currency)
-	return fmt.Sprintf("max %s%.2f, spent %s, remaining %s%.2f",
-		currencySymbol(currency), maxUSD, spentTextValue, currencySymbol(currency), costs.Remaining(maxUSD, spent))
-}
-
-func spentText(spent float64, known bool, currency string) string {
-	if !known {
-		return fmt.Sprintf("%s%.2f (at least: some runs have an unknown cost)", currencySymbol(currency), spent)
-	}
-	return fmt.Sprintf("%s%.2f", currencySymbol(currency), spent)
-}
-
-func currencySymbol(currency string) string {
-	if strings.EqualFold(currency, "USD") || currency == "" {
-		return "$"
-	}
-	return currency + " "
 }
 
 func nonEmpty(value, fallback string) string {

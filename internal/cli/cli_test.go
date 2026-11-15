@@ -28,7 +28,6 @@ type harness struct {
 	// openaiBody is served for every /responses call.
 	openaiBody string
 	geminiBody string
-	budgetUSD  float64
 }
 
 const openAICited = `{
@@ -61,7 +60,7 @@ const geminiCited = `{
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	h := &harness{
-		t: t, dir: t.TempDir(), openaiBody: openAICited, geminiBody: geminiCited, budgetUSD: 10,
+		t: t, dir: t.TempDir(), openaiBody: openAICited, geminiBody: geminiCited,
 	}
 	h.configPath = filepath.Join(h.dir, "aicm.toml")
 	h.dbPath = filepath.Join(h.dir, "measurements", "aicm.db")
@@ -127,23 +126,7 @@ timeout_seconds = 5
 concurrency = 2
 rpm = 6000
 max_retries = 0
-
-[budget]
-max_usd = %g
-currency = "USD"
-
-[pricing."openai/gpt-test"]
-input_usd_per_mtok = 1
-output_usd_per_mtok = 2
-input_tokens_per_call = 1000
-output_tokens_per_call = 500
-
-[pricing."gemini/gemini-test"]
-input_usd_per_mtok = 1
-output_usd_per_mtok = 2
-input_tokens_per_call = 1000
-output_tokens_per_call = 500
-`, h.dbPath, filepath.Join(h.dir, "reports"), h.server.URL, h.server.URL, h.budgetUSD)
+`, h.dbPath, filepath.Join(h.dir, "reports"), h.server.URL, h.server.URL)
 	if err := os.WriteFile(h.configPath, []byte(config), 0o644); err != nil {
 		h.t.Fatalf("write config: %v", err)
 	}
@@ -359,21 +342,6 @@ func TestReportWithoutRunsSaysNotMeasured(t *testing.T) {
 	}
 	if strings.Contains(stdout, "0.0%") {
 		t.Errorf("an empty period must not print 0.0%%:\n%s", stdout)
-	}
-}
-
-func TestBudgetStopsBeforeSending(t *testing.T) {
-	h := newHarness(t)
-	h.budgetUSD = 0.000001
-	h.writeConfig()
-	h.importQuestions()
-
-	code, _, stderr := h.run("run", "--provider", "openai", "--repeat", "1", "--yes")
-	if code != ExitBudget {
-		t.Fatalf("exit = %d, want %d: %s", code, ExitBudget, stderr)
-	}
-	if h.openaiHits.Load() != 0 {
-		t.Fatalf("the budget check must run before the first request (%d sent)", h.openaiHits.Load())
 	}
 }
 

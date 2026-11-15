@@ -1,6 +1,6 @@
 // Package runner executes a measurement plan: it builds the call list, refuses to
-// repeat a completed call, keeps concurrency and RPM bounded, records every
-// attempt (success, failure or cancellation), and stops spending at the budget.
+// repeat a completed call, keeps concurrency and RPM bounded, and records every
+// attempt (success, failure or cancellation).
 package runner
 
 import (
@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/routeflags/ai-citation-monitor/internal/costs"
 	"github.com/routeflags/ai-citation-monitor/internal/domain"
 	"github.com/routeflags/ai-citation-monitor/internal/providers"
 	"github.com/routeflags/ai-citation-monitor/internal/storage/sqlite"
@@ -42,35 +41,26 @@ type Item struct {
 	AlreadyDone bool
 }
 
-// Plan is the call list plus the estimate shown before anything is sent.
+// Plan is the call list shown before anything is sent.
 type Plan struct {
-	Items         []Item
-	Pending       int
-	AlreadyDone   int
-	Repeat        int
-	Stage         string
-	EstimatedCost float64
-	CostKnown     bool
-	CostBasis     []string
-	Targets       []Target
-	Questions     int
+	Items       []Item
+	Pending     int
+	AlreadyDone int
+	Repeat      int
+	Stage       string
+	Targets     []Target
+	Questions   int
 }
 
 // Runner holds the collaborators of one run.
 type Runner struct {
-	DB          *sqlite.DB
-	ProjectID   int64
-	OwnDomain   string
-	Subdomains  bool
-	BrandTerms  []string
-	Competitors []string
-	Providers   map[string]providers.Provider
-	Estimator   *costs.Estimator
-	BudgetUSD   float64
-	// StartingSpent is the cost already recorded in the database (the CLI reads
-	// it); the budget is about the whole account, not this one invocation.
-	StartingSpent      float64
-	StartingSpentKnown bool
+	DB                 *sqlite.DB
+	ProjectID          int64
+	OwnDomain          string
+	Subdomains         bool
+	BrandTerms         []string
+	Competitors        []string
+	Providers          map[string]providers.Provider
 	Concurrency        int
 	Session            string
 	QuestionSetVersion string
@@ -116,36 +106,6 @@ func (r *Runner) BuildPlan(ctx context.Context, questions []sqlite.Question, tar
 			}
 		}
 	}
-
-	plan.CostKnown = true
-	seen := map[string]bool{}
-	for _, target := range targets {
-		_, known, basis := r.Estimator.CallEstimate(target.Provider, target.Model)
-		if !seen[basis] {
-			seen[basis] = true
-			plan.CostBasis = append(plan.CostBasis, basis)
-		}
-		if !known {
-			plan.CostKnown = false
-		}
-	}
-	if plan.CostKnown {
-		for _, target := range targets {
-			perCall, known, _ := r.Estimator.CallEstimate(target.Provider, target.Model)
-			if !known {
-				plan.CostKnown = false
-				plan.EstimatedCost = 0
-				break
-			}
-			calls := 0
-			for _, item := range plan.Items {
-				if !item.AlreadyDone && item.Provider == target.Provider && item.Model == target.Model {
-					calls++
-				}
-			}
-			plan.EstimatedCost += perCall * float64(calls)
-		}
-	}
 	return plan, nil
 }
 
@@ -159,16 +119,11 @@ type Summary struct {
 	NotRun            int
 	TransportFailures int
 	ProviderFailures  int
-	Spent             float64
-	SpentKnown        bool
-	BudgetStopped     bool
 }
 
 // ExitKind classifies the run for the caller's exit code.
 func (s *Summary) ExitKind() string {
 	switch {
-	case s.BudgetStopped:
-		return "budget"
 	case s.Calls > 0 && s.Success == 0 && s.TransportFailures > 0:
 		return "transport"
 	case s.Calls > 0 && s.Failed > 0:
@@ -183,20 +138,7 @@ func (s *Summary) ExitKind() string {
 // Execute runs the plan. Every attempt is recorded; a cancellation stops new calls
 // but keeps what already finished.
 func (r *Runner) Execute(ctx context.Context, plan *Plan) (*Summary, error) {
-	summary := &Summary{Skipped: plan.AlreadyDone, SpentKnown: true}
-
-	// Conservative pre-check: if the whole remaining plan provably does not fit,
-	// nothing is sent at all.
-	if r.BudgetUSD > 0 && r.StartingSpentKnown && plan.CostKnown &&
-		r.StartingSpent+plan.EstimatedCost > r.BudgetUSD {
-		summary.BudgetStopped = true
-		summary.NotRun = plan.Pending
-		summary.Spent = r.StartingSpent
-		return summary, nil
-	}
-	if r.BudgetUSD > 0 {
-		summary.Spent = r.StartingSpent
-	}
+	summary := &Summary{Skipped: plan.AlreadyDone}
 
 	workers := r.Concurrency
 	if workers <= 0 {
@@ -232,11 +174,6 @@ func (r *Runner) Execute(ctx context.Context, plan *Plan) (*Summary, error) {
 						summary.ProviderFailures++
 					}
 				}
-				if result.spentKnown {
-					summary.Spent += result.spent
-				} else {
-					summary.SpentKnown = false
-				}
 				mutex.Unlock()
 			}
 		}()
@@ -250,16 +187,6 @@ dispatch:
 		}
 		if ctx.Err() != nil {
 			break
-		}
-		if r.BudgetUSD > 0 {
-			mutex.Lock()
-			spent := summary.Spent
-			known := summary.SpentKnown
-			mutex.Unlock()
-			if known && spent >= r.BudgetUSD {
-				summary.BudgetStopped = true
-				break
-			}
 		}
 		select {
 		case <-ctx.Done():
@@ -279,10 +206,8 @@ dispatch:
 }
 
 type oneResult struct {
-	status     string
-	errorKind  string
-	spent      float64
-	spentKnown bool
+	status    string
+	errorKind string
 }
 
 func (r *Runner) executeOne(ctx context.Context, item Item) oneResult {
@@ -318,18 +243,9 @@ func (r *Runner) executeOne(ctx context.Context, item Item) oneResult {
 	}
 
 	return oneResult{
-		status:     result.Status,
-		errorKind:  result.ErrorKind,
-		spent:      writeCost(write),
-		spentKnown: write.Usage.CostStatus == costs.StatusEstimated,
+		status:    result.Status,
+		errorKind: result.ErrorKind,
 	}
-}
-
-func writeCost(write sqlite.RunWrite) float64 {
-	if write.Usage.EstimatedCost == nil {
-		return 0
-	}
-	return *write.Usage.EstimatedCost
 }
 
 func (r *Runner) buildWrite(item Item, result providers.Result) sqlite.RunWrite {
@@ -356,21 +272,11 @@ func (r *Runner) buildWrite(item Item, result providers.Result) sqlite.RunWrite 
 		})
 	}
 
-	costUSD, costKnown, basis := r.Estimator.RunCost(item.Provider, item.Model, result.Usage.InputTokens, result.Usage.OutputTokens)
 	usage := sqlite.UsageWrite{
 		InputTokens:  result.Usage.InputTokens,
 		OutputTokens: result.Usage.OutputTokens,
 		TotalTokens:  result.Usage.TotalTokens,
 		ToolCalls:    result.Usage.ToolCalls,
-		CostCurrency: r.Estimator.Currency,
-	}
-	if costKnown {
-		usage.CostStatus = costs.StatusEstimated
-		usage.EstimatedCost = &costUSD
-		usage.PriceBasis = basis
-	} else {
-		usage.CostStatus = costs.StatusUnknown
-		usage.PriceBasis = basis
 	}
 
 	completed := result.CompletedAt

@@ -59,11 +59,11 @@ func sampleWrite(project *Project, question Question, planKey, model string) Run
 			DedupeKey: "https://example.shop/a", Hostname: &host, SourceType: "own", IsOwn: true,
 		}},
 		Mentions: []MentionWrite{{Term: "Example", Kind: "brand", MatchedText: "example", Occurrences: 1}},
-		Usage:    UsageWrite{CostStatus: "estimated", CostCurrency: "USD", EstimatedCost: floatPointer(0.01)},
+		Usage:    UsageWrite{InputTokens: intPointer(1000), OutputTokens: intPointer(500), ToolCalls: intPointer(1)},
 	}
 }
 
-func floatPointer(value float64) *float64 { return &value }
+func intPointer(value int) *int { return &value }
 
 func TestInsertRunIsAppendOnly(t *testing.T) {
 	db := newTestDB(t)
@@ -92,8 +92,8 @@ func TestInsertRunIsAppendOnly(t *testing.T) {
 	if responses[0].AnswerSHA256 != write.AnswerSHA256 {
 		t.Errorf("the stored hash does not match the answer")
 	}
-	if responses[0].EstimatedCost == nil {
-		t.Error("the cost was not stored")
+	if runs[0].ToolCalls == nil || *runs[0].ToolCalls != 1 {
+		t.Errorf("tool calls were not joined from usage_records: %v", runs[0].ToolCalls)
 	}
 
 	counts, err := db.Counts(ctx)
@@ -211,35 +211,5 @@ func TestMigrateIsIdempotentAndKeepsRecords(t *testing.T) {
 	}
 	if counts.Runs != 1 {
 		t.Fatalf("runs = %d after a re-migration, want 1", counts.Runs)
-	}
-}
-
-func TestSumCostTracksUnknown(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	project, question := seedProject(t, db)
-	write := sampleWrite(project, question, "key-1", "gpt-test")
-	if _, _, err := db.InsertRun(ctx, write); err != nil {
-		t.Fatal(err)
-	}
-	total, known, err := db.SumCost(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !known || total <= 0 {
-		t.Fatalf("sum = %v known = %v", total, known)
-	}
-
-	unknown := sampleWrite(project, question, "key-2", "gpt-unknown")
-	unknown.Usage = UsageWrite{CostStatus: "unknown", CostCurrency: "USD"}
-	if _, _, err := db.InsertRun(ctx, unknown); err != nil {
-		t.Fatal(err)
-	}
-	_, known, err = db.SumCost(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if known {
-		t.Fatal("a run with an unknown cost must make the total a lower bound, not a total")
 	}
 }

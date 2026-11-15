@@ -275,12 +275,11 @@ func (d *DB) InsertRun(ctx context.Context, w RunWrite) (runID int64, inserted b
 	responseResult, err := tx.ExecContext(ctx, `
 		INSERT INTO responses (
 			run_id, answer_text, answer_sha256, raw_response_json, citation_observability,
-			error_code, error_message, input_tokens, output_tokens, tool_usage,
-			estimated_cost, cost_currency, cost_status, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			error_code, error_message, input_tokens, output_tokens, tool_usage, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		runID, w.AnswerText, w.AnswerSHA256, w.RawResponseJSON, w.CitationObservability,
 		w.ErrorCode, w.ErrorMessage, w.Usage.InputTokens, w.Usage.OutputTokens,
-		"", w.Usage.EstimatedCost, w.Usage.CostCurrency, defaultString(w.Usage.CostStatus, "unknown"), now,
+		"", now,
 	)
 	if err != nil {
 		return 0, false, fmt.Errorf("insert response: %w", err)
@@ -329,12 +328,10 @@ func (d *DB) InsertRun(ctx context.Context, w RunWrite) (runID int64, inserted b
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO usage_records (
 			run_id, provider, model, input_tokens, output_tokens, total_tokens, tool_calls,
-			cost_status, cost_currency, estimated_cost, price_basis, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		runID, w.Provider, w.Model, w.Usage.InputTokens, w.Usage.OutputTokens,
-		w.Usage.TotalTokens, w.Usage.ToolCalls, defaultString(w.Usage.CostStatus, "unknown"),
-		defaultString(w.Usage.CostCurrency, "USD"), w.Usage.EstimatedCost,
-		w.Usage.PriceBasis, now,
+		w.Usage.TotalTokens, w.Usage.ToolCalls, now,
 	); err != nil {
 		return 0, false, fmt.Errorf("insert usage: %w", err)
 	}
@@ -370,11 +367,12 @@ func (d *DB) Runs(ctx context.Context, filter RunFilter) ([]Run, error) {
 		       r.measurement_method, r.stage, r.question_set_version, r.question_set_sha256,
 		       r.plan_key, r.session, r.started_at_utc, r.completed_at_utc, r.status,
 		       r.citation_observability, r.cited_own, r.citation_count, r.brand_mentioned,
-		       r.tool_version, resp.input_tokens, resp.output_tokens
+		r.tool_version, resp.input_tokens, resp.output_tokens, u.tool_calls
 		FROM runs r
 		JOIN questions q ON q.id = r.question_id
 		LEFT JOIN question_versions qv ON qv.question_id = r.question_id AND qv.version = r.question_version
 		LEFT JOIN responses resp ON resp.run_id = r.id
+		LEFT JOIN usage_records u ON u.run_id = r.id
 		WHERE 1 = 1`
 	args := []any{}
 	if filter.StartUTC != "" {
@@ -408,7 +406,7 @@ func (d *DB) Runs(ctx context.Context, filter RunFilter) ([]Run, error) {
 	for rows.Next() {
 		var run Run
 		var searchEnabled, citedOwn, brandMentioned int
-		var inputTokens, outputTokens sql.NullInt64
+		var inputTokens, outputTokens, toolCalls sql.NullInt64
 		if err := rows.Scan(
 			&run.ID, &run.ProjectID, &run.QuestionID, &run.QuestionKey, &run.QuestionVersion,
 			&run.QuestionText, &run.Category, &run.RepeatIndex,
@@ -416,7 +414,7 @@ func (d *DB) Runs(ctx context.Context, filter RunFilter) ([]Run, error) {
 			&run.MeasurementMethod, &run.Stage, &run.QuestionSetVersion, &run.QuestionSetSHA256,
 			&run.PlanKey, &run.Session, &run.StartedAtUTC, &run.CompletedAtUTC, &run.Status,
 			&run.CitationObservability, &citedOwn, &run.CitationCount, &brandMentioned,
-			&run.ToolVersion, &inputTokens, &outputTokens,
+			&run.ToolVersion, &inputTokens, &outputTokens, &toolCalls,
 		); err != nil {
 			return nil, err
 		}
@@ -425,6 +423,7 @@ func (d *DB) Runs(ctx context.Context, filter RunFilter) ([]Run, error) {
 		run.BrandMentioned = brandMentioned == 1
 		run.InputTokens = nullInt(inputTokens)
 		run.OutputTokens = nullInt(outputTokens)
+		run.ToolCalls = nullInt(toolCalls)
 		runs = append(runs, run)
 	}
 	return runs, rows.Err()
@@ -441,8 +440,7 @@ func nullInt(value sql.NullInt64) *int {
 // Responses reads response rows for the given runs (all runs when ids is empty).
 func (d *DB) Responses(ctx context.Context, runIDs []int64) ([]ResponseRow, error) {
 	sqlText := `SELECT run_id, answer_text, answer_sha256, raw_response_json, citation_observability,
-		error_code, error_message, input_tokens, output_tokens, tool_usage,
-		estimated_cost, cost_currency, cost_status FROM responses`
+		error_code, error_message, input_tokens, output_tokens, tool_usage FROM responses`
 	args := []any{}
 	if len(runIDs) > 0 {
 		sqlText += ` WHERE run_id IN (` + placeholders(len(runIDs)) + `)`
@@ -460,18 +458,13 @@ func (d *DB) Responses(ctx context.Context, runIDs []int64) ([]ResponseRow, erro
 	for rows.Next() {
 		var r ResponseRow
 		var inputTokens, outputTokens sql.NullInt64
-		var estimatedCost sql.NullFloat64
 		if err := rows.Scan(&r.RunID, &r.AnswerText, &r.AnswerSHA256, &r.RawResponseJSON,
 			&r.CitationObservability, &r.ErrorCode, &r.ErrorMessage, &inputTokens,
-			&outputTokens, &r.ToolUsage, &estimatedCost, &r.CostCurrency, &r.CostStatus); err != nil {
+			&outputTokens, &r.ToolUsage); err != nil {
 			return nil, err
 		}
 		r.InputTokens = nullInt(inputTokens)
 		r.OutputTokens = nullInt(outputTokens)
-		if estimatedCost.Valid {
-			value := estimatedCost.Float64
-			r.EstimatedCost = &value
-		}
 		responses = append(responses, r)
 	}
 	return responses, rows.Err()

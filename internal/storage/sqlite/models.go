@@ -56,6 +56,7 @@ type Run struct {
 	ToolVersion           string
 	InputTokens           *int
 	OutputTokens          *int
+	ToolCalls             *int
 }
 
 // ResponseRow is the stored answer plus usage snapshot.
@@ -70,9 +71,6 @@ type ResponseRow struct {
 	InputTokens           *int
 	OutputTokens          *int
 	ToolUsage             string
-	EstimatedCost         *float64
-	CostCurrency          string
-	CostStatus            string
 }
 
 // CitationRow is one cited URL with both raw and derived values.
@@ -100,19 +98,16 @@ type MentionRow struct {
 	Ambiguous   bool
 }
 
-// UsageRow is the cost record for a run.
+// UsageRow is the provider-reported usage of a run (tokens and tool calls), not
+// a cost: this tool does not price anything.
 type UsageRow struct {
-	RunID         int64
-	Provider      string
-	Model         string
-	InputTokens   *int
-	OutputTokens  *int
-	TotalTokens   *int
-	ToolCalls     *int
-	CostStatus    string
-	CostCurrency  string
-	EstimatedCost *float64
-	PriceBasis    string
+	RunID        int64
+	Provider     string
+	Model        string
+	InputTokens  *int
+	OutputTokens *int
+	TotalTokens  *int
+	ToolCalls    *int
 }
 
 // CitationWrite is a citation to append with its run.
@@ -138,14 +133,10 @@ type MentionWrite struct {
 
 // UsageWrite is the usage snapshot to append with its run.
 type UsageWrite struct {
-	InputTokens   *int
-	OutputTokens  *int
-	TotalTokens   *int
-	ToolCalls     *int
-	CostStatus    string
-	CostCurrency  string
-	EstimatedCost *float64
-	PriceBasis    string
+	InputTokens  *int
+	OutputTokens *int
+	TotalTokens  *int
+	ToolCalls    *int
 }
 
 // RunWrite is one append-only run + response + children.

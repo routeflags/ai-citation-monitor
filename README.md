@@ -23,7 +23,6 @@ proves it. Nothing claims to have been measured against a live API.
 | OpenAI adapter (Responses API + `web_search`) | **Implemented, not verified against the live API.** Request/response shapes come from the published documentation and from captured responses used as reference; the tests serve those shapes from `httptest` |
 | Gemini adapter (`generateContent` + `google_search`) | **Implemented, not verified against the live API.** Same caveat |
 | Citation extraction from provider metadata | **Verified** with fixtures for cited / not-cited / error / empty / no-metadata responses |
-| Cost estimate and budget stop | **Verified** with a price table; the estimate is `unknown` (not zero) when no price is configured |
 | Retry (429 / 502 / 503 / 504, `Retry-After`), rate limit, concurrency, Ctrl+C resume | **Verified** by unit tests |
 | Live measurement of any provider | **Not done.** It spends money and needs a credential, so it only happens with an explicit owner decision |
 
@@ -91,8 +90,7 @@ aicm verify
 ```
 
 `aicm run` with no `--dry-run` stops at the first missing piece: a bad
-configuration exits 2, a missing credential exits 3 (and nothing is sent), an
-exceeded budget exits 5.
+configuration exits 2, a missing credential exits 3 (and nothing is sent).
 
 ## Commands
 
@@ -121,7 +119,6 @@ exceeded budget exits 5.
 | 2 | Configuration or usage problem |
 | 3 | Credential missing — nothing was sent |
 | 4 | API or transport failure |
-| 5 | Budget stop |
 
 Every failure also carries a stable `reason` string (`--json`: `error.reason`), so
 a script can tell "no credential" from "bad config" without parsing text.

@@ -23,11 +23,10 @@ Global flags:
 | 2 | configuration / usage problem |
 | 3 | credential missing (nothing was sent) |
 | 4 | API / transport failure |
-| 5 | budget stop |
 
 With `--json`, a failure is `{"error":{"code":2,"reason":"config_incomplete","message":"..."}}`.
 Reasons are stable strings: `config_incomplete`, `config_invalid`, `auth_missing`,
-`model_missing`, `questions_missing`, `budget_exceeded`, `budget_stopped`,
+`model_missing`, `questions_missing`,
 `api_failure`, `partial_failure`, `evidence_inconsistent`, `question_set_invalid`,
 `period_invalid`, `usage`.
 
@@ -72,8 +71,8 @@ aicm run [--provider openai|gemini|openai,gemini] [--source ...] [--model M]
 - One call = one question x one repeat x one provider/model. `--repeat` is 1..5.
 - A call already recorded with the same conditions and session is skipped, so a
   resumed run never pays twice. `--session` defaults to today's JST date.
-- `--dry-run` prints the questions, the planned call count, the estimate, the
-  budget and the checks, and sends nothing. It needs no credential: a missing key
+- `--dry-run` prints the questions, the planned call count and the checks, and
+  sends nothing. It needs no credential: a missing key
   is reported as `auth: <provider> <ENV>=missing` (a real run would exit 3), but
   the plan still prints and the exit code stays 0.
 - Without `--yes` the command asks for confirmation when stdin is a terminal, and
@@ -85,13 +84,10 @@ questions: 5
 target:    openai / <model>
 condition: stage=smoke repeat=1 session=2026-11-15
 calls:     5 planned, 0 already recorded (skipped)
-estimate:  unknown (no price for openai/<model>)
-budget:    max $5.00, spent $0.00, remaining $5.00
 run: calls=5 success=5 failed=0 cancelled=0 skipped=0 not_run=0
-cost: $0.04
 ```
 
-- `--json` output: `{"calls":5,"success":5,"failed":0,"cancelled":0,"skipped":0,"not_run":0,"spent_usd":0.04,"spent_known":true,"budget_stopped":false,"exit_kind":"ok"}`.
+- `--json` output: `{"calls":5,"success":5,"failed":0,"cancelled":0,"skipped":0,"not_run":0,"exit_kind":"ok"}`.
 
 ## report
 

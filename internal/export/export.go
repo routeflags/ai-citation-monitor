@@ -49,8 +49,7 @@ type Row struct {
 	BrandMentioned        bool       `json:"brand_mentioned"`
 	InputTokens           *int       `json:"input_tokens"`
 	OutputTokens          *int       `json:"output_tokens"`
-	EstimatedCost         *float64   `json:"estimated_cost"`
-	CostStatus            string     `json:"cost_status"`
+	ToolCalls             *int       `json:"tool_calls"`
 	ErrorCode             string     `json:"error_code"`
 	ErrorMessage          string     `json:"error_message"`
 	AnswerSHA256          string     `json:"answer_sha256"`
@@ -97,8 +96,7 @@ func BuildRows(runs []sqlite.Run, responses []sqlite.ResponseRow, citations []sq
 			BrandMentioned:        run.BrandMentioned,
 			InputTokens:           run.InputTokens,
 			OutputTokens:          run.OutputTokens,
-			EstimatedCost:         response.EstimatedCost,
-			CostStatus:            response.CostStatus,
+			ToolCalls:             run.ToolCalls,
 			ErrorCode:             response.ErrorCode,
 			ErrorMessage:          response.ErrorMessage,
 			AnswerSHA256:          response.AnswerSHA256,
@@ -153,7 +151,7 @@ var csvHeader = []string{
 	"api_endpoint_version", "search_enabled", "measurement_method", "stage",
 	"question_key", "question_version", "question_text", "category", "repeat_index",
 	"status", "citation_observability", "cited_own", "citation_count", "brand_mentioned",
-	"input_tokens", "output_tokens", "estimated_cost", "cost_status",
+	"input_tokens", "output_tokens", "tool_calls",
 	"error_code", "error_message", "answer_sha256",
 	"question_set_version", "question_set_sha256", "tool_version", "session",
 }
@@ -187,8 +185,7 @@ func WriteCSV(w io.Writer, rows []Row) error {
 			strconv.FormatBool(row.BrandMentioned),
 			optionalInt(row.InputTokens),
 			optionalInt(row.OutputTokens),
-			optionalFloat(row.EstimatedCost),
-			row.CostStatus,
+			optionalInt(row.ToolCalls),
 			row.ErrorCode,
 			row.ErrorMessage,
 			row.AnswerSHA256,
