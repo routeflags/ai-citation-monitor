@@ -254,7 +254,9 @@ func TestFullPipelineRecordsReportsAndExports(t *testing.T) {
 	if code != ExitOK {
 		t.Fatalf("report = %d: %s", code, stderr)
 	}
-	if !strings.Contains(stdout, "reports/report-2026-11-15_2026-11-15-openai-gpt-test-smoke") {
+	// The report path is printed with the platform separator; compare on a
+	// normalised copy so the assertion is about the name, not about Windows.
+	if !strings.Contains(strings.ReplaceAll(stdout, `\`, "/"), "reports/report-2026-11-15_2026-11-15-openai-gpt-test-smoke") {
 		t.Errorf("the report file name must carry period, provider, model and stage:\n%s", stdout)
 	}
 
