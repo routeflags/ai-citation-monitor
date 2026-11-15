@@ -29,6 +29,13 @@ Details that matter:
 
 - **Brand mention rate divides by successful runs**, not by judgeable ones: the
   mention is a property of the answer text, which a successful run always has.
+- **How a brand term is matched.** Both sides are normalised (NFKC, whitespace
+  folded, lower case). A plain ASCII term must sit on word boundaries, so the
+  brand `Go` matches `Go 1.27.4` but not `Google`. A term with any non-ASCII
+  character is matched as a substring, because those scripts have no boundary to
+  anchor on. A term that appears **only inside a longer word** is recorded as an
+  ambiguous mention and left out of the rate: unknown, not "not mentioned". The
+  report prints that count separately.
 - **Competitor citation rate does not add up to 100%.** One answer can cite
   several domains, so it is a per-domain rate, not a partition.
 - **Citation share counts malformed citations as one each.** A URL without a host

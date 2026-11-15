@@ -167,20 +167,92 @@ func NormalizeCitations(rawURLs []string, ownDomain string, subdomains bool) []C
 	return citations
 }
 
-// BrandMentioned reports whether any brand term occurs in the answer text.
-// Matching uses NormalizeText on both sides, so "THCH Vape" matches "thch  vape".
-func BrandMentioned(answerText string, brandTerms []string) bool {
+// BrandMatch is the outcome of matching one brand term against an answer.
+type BrandMatch struct {
+	// Term is the term as configured (not normalised), so a record says which
+	// configured word hit.
+	Term string
+	// Occurrences is how many times the term appears.
+	Occurrences int
+	// Ambiguous is true when the term only appears inside a longer word, e.g. the
+	// brand "Go" inside "Google". Such a hit is recorded but excluded from the
+	// mention rate: it is unknown, not zero.
+	Ambiguous bool
+}
+
+// MatchBrandTerm reports how one brand term appears in the answer text.
+//
+// Both sides go through NormalizeText first (NFKC, whitespace folded, lower
+// case). A plain ASCII term is matched on word boundaries, so "Go" matches
+// "Go 1.27.4" but not "Google"; a term that contains any non-ASCII character is
+// matched as a substring, because those scripts have no boundary to anchor on.
+// A term that is found only inside a longer word is returned as Ambiguous.
+func MatchBrandTerm(answerText, term string) (BrandMatch, bool) {
 	text := NormalizeText(answerText)
-	if text == "" {
-		return false
+	needle := NormalizeText(term)
+	if text == "" || needle == "" {
+		return BrandMatch{}, false
 	}
+	occurrences := strings.Count(text, needle)
+	if occurrences == 0 {
+		return BrandMatch{}, false
+	}
+	match := BrandMatch{Term: term, Occurrences: occurrences}
+	if !isASCIIWord(needle) {
+		return match, true
+	}
+	if bounded := countBoundedOccurrences(text, needle); bounded > 0 {
+		match.Occurrences = bounded
+		return match, true
+	}
+	match.Ambiguous = true
+	return match, true
+}
+
+// BrandMentioned reports whether any brand term is mentioned unambiguously.
+func BrandMentioned(answerText string, brandTerms []string) bool {
 	for _, term := range brandTerms {
-		normalized := NormalizeText(term)
-		if normalized != "" && strings.Contains(text, normalized) {
+		if match, ok := MatchBrandTerm(answerText, term); ok && !match.Ambiguous {
 			return true
 		}
 	}
 	return false
+}
+
+// isASCIIWord reports whether the term is plain lower-case ASCII letters, digits
+// and spaces, the only shape for which a word boundary means something here.
+func isASCIIWord(term string) bool {
+	for i := 0; i < len(term); i++ {
+		c := term[i]
+		if c == ' ' || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// countBoundedOccurrences counts hits that are not part of a longer word.
+// The text is already lower case, so a boundary is simply "not [a-z0-9]".
+func countBoundedOccurrences(text, needle string) int {
+	count := 0
+	for start := 0; start+len(needle) <= len(text); {
+		index := strings.Index(text[start:], needle)
+		if index < 0 {
+			break
+		}
+		pos := start + index
+		end := pos + len(needle)
+		if (pos == 0 || !isWordByte(text[pos-1])) && (end == len(text) || !isWordByte(text[end])) {
+			count++
+		}
+		start = pos + 1
+	}
+	return count
+}
+
+func isWordByte(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
 }
 
 // ClassifyDomain buckets a cited domain for reporting: own, competitor or other.

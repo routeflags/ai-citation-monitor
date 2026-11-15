@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -388,6 +387,18 @@ func (r *Runner) buildWrite(item Item, result providers.Result) sqlite.RunWrite 
 		observability = providers.ObservabilityUnknown
 	}
 
+	// The run column and the mentions rows are two views of one match, so they are
+	// computed together: a mention that can only be read as part of a longer word
+	// is recorded as ambiguous and does not count as "mentioned".
+	mentions := brandMentions(result.AnswerText, r.BrandTerms)
+	brandMentioned := false
+	for _, mention := range mentions {
+		if !mention.Ambiguous {
+			brandMentioned = true
+			break
+		}
+	}
+
 	return sqlite.RunWrite{
 		ProjectID:             r.ProjectID,
 		QuestionID:            item.Question.ID,
@@ -408,7 +419,7 @@ func (r *Runner) buildWrite(item Item, result providers.Result) sqlite.RunWrite 
 		CitationObservability: observability,
 		CitedOwn:              result.Status == providers.StatusSuccess && citedOwn,
 		CitationCount:         len(citations),
-		BrandMentioned:        result.Status == providers.StatusSuccess && domain.BrandMentioned(result.AnswerText, r.BrandTerms),
+		BrandMentioned:        result.Status == providers.StatusSuccess && brandMentioned,
 		ToolVersion:           ToolVersion(),
 		AnswerText:            result.AnswerText,
 		AnswerSHA256:          sha256Hex(result.AnswerText),
@@ -416,7 +427,7 @@ func (r *Runner) buildWrite(item Item, result providers.Result) sqlite.RunWrite 
 		ErrorCode:             result.ErrorCode,
 		ErrorMessage:          result.ErrorMessage,
 		Citations:             citations,
-		Mentions:              brandMentions(result.AnswerText, r.BrandTerms),
+		Mentions:              mentions,
 		Usage:                 usage,
 	}
 }
@@ -440,30 +451,22 @@ func sha256Hex(value string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// brandMentions records which brand terms hit the answer. A term shorter than
-// three characters cannot be attributed (it is likely to be a common word), so it
-// is marked ambiguous and excluded from the mention rate.
+// brandMentions records which brand terms hit the answer. The rule lives in
+// domain.MatchBrandTerm: ASCII terms match on word boundaries, terms that only
+// appear inside a longer word are marked ambiguous and left out of the rate.
 func brandMentions(answerText string, terms []string) []sqlite.MentionWrite {
-	normalized := domain.NormalizeText(answerText)
-	if normalized == "" {
-		return nil
-	}
 	mentions := make([]sqlite.MentionWrite, 0, len(terms))
 	for _, term := range terms {
-		needle := domain.NormalizeText(term)
-		if needle == "" {
-			continue
-		}
-		occurrences := strings.Count(normalized, needle)
-		if occurrences == 0 {
+		match, ok := domain.MatchBrandTerm(answerText, term)
+		if !ok {
 			continue
 		}
 		mentions = append(mentions, sqlite.MentionWrite{
-			Term:        term,
+			Term:        match.Term,
 			Kind:        "brand",
-			MatchedText: needle,
-			Occurrences: occurrences,
-			Ambiguous:   len([]rune(needle)) < 3,
+			MatchedText: domain.NormalizeText(match.Term),
+			Occurrences: match.Occurrences,
+			Ambiguous:   match.Ambiguous,
 		})
 	}
 	return mentions

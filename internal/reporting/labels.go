@@ -53,8 +53,10 @@ var enLabels = labels{
 		"models or stages are never produced.",
 	geoH:      "GEO: citation rate and brand mention rate",
 	citedRate: "own citation rate", brandRate: "brand mention rate",
-	brandNote: "Brand mentions are substring matches (NFKC, whitespace folding, lower case). A " +
-		"generic brand term can match a sentence about someone else.",
+	brandNote: "Brand terms are normalised (NFKC, whitespace folded, lower case); an " +
+		"ASCII term must sit on word boundaries, so a hit inside a longer word is " +
+		"counted as ambiguous and left out of the rate. A generic brand term can " +
+		"still match a sentence about someone else.",
 	aeoQH: "AEO: citation rate per question", question: "question", category: "category",
 	questionText: "question text", acquireRate: "citation rate",
 	coverageH: "AEO: question coverage", coverageRate: "coverage",
@@ -118,8 +120,9 @@ var jaLabels = labels{
 		"は 0% ではない。プロバイダー・モデル・stage をまたいだ合計は出さない。",
 	geoH:      "GEO: 引用率・ブランド言及率",
 	citedRate: "自社引用率", brandRate: "ブランド言及率",
-	brandNote: "ブランド言及は部分一致（NFKC・空白畳み込み・小文字化）。屋号のような一般語は、" +
-		"他社を指す文でも一致し得る。",
+	brandNote: "ブランド語は正規化（NFKC・空白畳み込み・小文字化）して照合する。ASCII の語は" +
+		"語境界で一致させるので、長い語の内側にしか現れない一致は曖昧（ambiguous）として率から外す。" +
+		"屋号のような一般語は、他社を指す文でも一致し得る。",
 	aeoQH: "AEO: 質問別 引用獲得率", question: "質問", category: "分類",
 	questionText: "質問文", acquireRate: "獲得率",
 	coverageH: "AEO: 質問カバー率", coverageRate: "カバー率",

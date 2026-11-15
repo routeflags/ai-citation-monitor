@@ -107,6 +107,41 @@ func TestNormalizeTextAndBrandMentioned(t *testing.T) {
 	}
 }
 
+func TestBrandTermMatchesOnWordBoundaries(t *testing.T) {
+	// A short brand is a real brand: "Go" in "Go 1.27.4" is a mention.
+	match, ok := MatchBrandTerm("The latest stable release is **Go 1.27.4**. (go.dev)", "Go")
+	if !ok || match.Ambiguous {
+		t.Fatalf("match = %+v ok=%t, want a certain mention", match, ok)
+	}
+	if match.Occurrences != 2 {
+		t.Errorf("occurrences = %d, want 2 (Go 1.27.4 and go.dev)", match.Occurrences)
+	}
+
+	// The same letters inside a longer word cannot be attributed to the brand.
+	match, ok = MatchBrandTerm("Google and the algorithm", "Go")
+	if !ok {
+		t.Fatal("a substring hit should still be recorded")
+	}
+	if !match.Ambiguous {
+		t.Errorf("match = %+v, want ambiguous (only inside longer words)", match)
+	}
+	if BrandMentioned("Google and the algorithm", []string{"Go"}) {
+		t.Error("an ambiguous hit must not count as mentioned")
+	}
+
+	// One certain hit is enough, even when the same letters also appear inside a
+	// word elsewhere.
+	match, ok = MatchBrandTerm("Google announced Go 1.27", "go")
+	if !ok || match.Ambiguous || match.Occurrences != 1 {
+		t.Errorf("match = %+v ok=%t, want one certain mention", match, ok)
+	}
+
+	// Punctuation is a boundary; a trailing dot or markdown is not part of a word.
+	if _, ok := MatchBrandTerm("see go.dev/docs", "go.dev"); !ok {
+		t.Error("a term with dots is matched as a substring and should hit")
+	}
+}
+
 func TestClassifyDomain(t *testing.T) {
 	competitors := []string{"rival.example"}
 	if got := ClassifyDomain("www.example.shop", "example.shop", true, competitors); got != "own" {
