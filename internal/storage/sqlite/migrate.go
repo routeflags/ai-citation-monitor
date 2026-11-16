@@ -27,7 +27,10 @@ func Open(path string) (*DB, error) {
 	}
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return nil, fmt.Errorf("create db directory %s: %w", dir, err)
+			// The caller prints the database path, so name the step, not the
+			// directory again; the wrapped error says which component failed and
+			// why (MkdirAll stops at the first one it cannot create).
+			return nil, fmt.Errorf("create the database directory: %w", err)
 		}
 	}
 	dsn := path + "?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
