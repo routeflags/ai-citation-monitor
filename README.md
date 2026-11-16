@@ -219,17 +219,10 @@ Phase 1 is a **CLI-only** tool supporting OpenAI, Gemini, and Anthropic. It does
 
 ## Philosophy
 
-A measurement is an argument about what a number means. Most "AI visibility" numbers in circulation
-carry no denominator, no record of the conditions that produced them, and no way to be checked again:
-they are opinions with a percent sign. This tool is built the other way round. Every rate prints its
-`n`; a citation is taken from provider metadata, never from a URL guessed out of the prose; a failed
-call is recorded as a failure rather than as a zero; and the record is append-only, so someone else can
-re-derive the same number without trusting us. When the evidence is missing, the answer is *not
-measured*, not a reassuring figure.
+Structures nobody reviews, social ones included, accumulate as technical debt.
+The same stance decides what this tool will and will not claim.
 
-That is the same stance we take on OSS in general: structures nobody reviews — social ones included —
-accumulate as technical debt. See [Engineering blog: Society also has technical
-debt](https://www.thch-vape.shop/guide/column/git-log--oneline--all--society).
+- [Engineering blog: Society also has technical debt](https://www.thch-vape.shop/guide/column/git-log--oneline--all--society)
 
 ## License
 
