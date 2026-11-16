@@ -230,7 +230,7 @@ own / other only)` を出す。競合を測るなら `aicm competitors add <doma
 **live で見るもの（1 プロバイダー 1 コールから）**
 
 ```bash
-set -a; . ~/Codes/github.com/routeflags/ai-citation-monitor/.env; set +a
+set -a; . /path/to/ai-citation-monitor/.env; set +a   # 鍵を置いた .env。aicm 自身は .env を読まない
 aicm run --provider openai --model gpt-6.1-sol --stage smoke --repeat 1 --yes
 aicm verify
 aicm report --period 1d
