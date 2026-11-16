@@ -172,3 +172,79 @@ unset OPENAI_API_KEY GEMINI_API_KEY ANTHROPIC_API_KEY
 
 `measurements/` と `reports/` は `.gitignore` 済みだが、リポジトリ内で試した場合は
 `git status` に現れないことを確認しておく。
+
+## 付録: 実サイトでの確認（thch-vape.shop / 「H4CBHとは？」）
+
+実在のサイトと 1 問だけで、live の経路を最短で見るためのセット。`~/tmp/aicm-debug/thch-vape/` に
+置いた状態のファイルをそのまま載せる（2026-11-17 作成、`aicm 0.1.2` で `--check` / `--dry-run` 確認済み）。
+
+```bash
+mkdir -p ~/tmp/aicm-debug/thch-vape && cd ~/tmp/aicm-debug/thch-vape
+aicm init --non-interactive \
+  --site-id thch-vape --site-name "リキッド通販ショップ" \
+  --own-domain thch-vape.shop \
+  --brand-terms "リキッド通販ショップ" --brand-terms "H4CBH" --brand-terms "thch-vape" \
+  --market ja-JP --language ja --report-language ja
+```
+
+`aicm init` は `subdomains = true` で書き出すので、`www.thch-vape.shop` は自社ドメインとして
+数えられる（`own_domain` は登録可能ドメインを書く）。質問セットは `questions.yml`:
+
+```yaml
+set_version: "1.0.0"
+site_id: thch-vape
+own_domain: thch-vape.shop
+subdomains: true
+market: ja-JP
+language: ja
+
+brand_terms_status: proposed
+brand_terms:
+  - リキッド通販ショップ
+  - H4CBH
+  - thch-vape
+competitors: []
+
+questions:
+  - { id: Q01, text: "H4CBHとは？", category: definition }
+
+stages:
+  smoke:
+    runs_per_question: 1
+    question_ids: [Q01]
+  initial:
+    runs_per_question: 3
+    question_ids: [Q01]
+```
+
+```bash
+aicm questions import --file questions.yml --check   # smoke 1x1 / initial 1x3、何も書かない
+aicm questions import --file questions.yml
+aicm run --provider openai --model gpt-6.1-sol --stage smoke --repeat 1 --dry-run
+```
+
+`--check` は `competitors` が空だと `warning: I042: competitors is empty (the share table shows
+own / other only)` を出す。競合を測るなら `aicm competitors add <domain>` で後から足せる
+（足すとレポートのシェア表が変わるので、比較する期間の中では変えない）。
+
+**live で見るもの（1 プロバイダー 1 コールから）**
+
+```bash
+set -a; . ~/Codes/github.com/routeflags/ai-citation-monitor/.env; set +a
+aicm run --provider openai --model gpt-6.1-sol --stage smoke --repeat 1 --yes
+aicm verify
+aicm report --period 1d
+aicm export --format jsonl | head -1   # 1 行目に 1 run の全列が出る
+```
+
+- `cited_own`: `H4CBH` の一般的な説明をした回答が `thch-vape.shop` を引用するか。0 でも異常ではない
+  （引用メタデータが返っていれば `citation_observability = observed` で分母に入る）
+- `citations` の host 一覧: 引用元が実在のドメインか（Gemini で `vertexaisearch.cloud.google.com` が
+  残っていたら正規化の不具合）
+- `runs.status` / `error_code`: 失敗ならここに出る（401 は `invalid_api_key` で exit 4）
+- 同じコマンドの再実行: `calls: 0 planned, 1 already recorded` でスキップされる
+
+**brand_terms の注意**: 質問文自体に `H4CBH` が入っているので、`brand_terms` に `H4CBH` を
+入れると `brand_mentioned` はほぼ常に真になる。デバッグでは「言及の抽出が動いているか」を見るには
+便利だが、本番の言及率としては意味を持たない。実測用のセットでは質問に出てこない語（店名など）に
+絞る。
