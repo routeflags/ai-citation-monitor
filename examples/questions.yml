@@ -15,8 +15,8 @@ subdomains: true
 market: ja-JP
 language: en
 
-# brand_terms_status: proposed | confirmed. "proposed" means the words are a
-# guess and the report keeps saying so.
+# brand_terms_status: proposed | confirmed. Accepted and validated on import;
+# nothing reads it yet, so no report line depends on it.
 brand_terms_status: proposed
 brand_terms:
   - Example

@@ -91,6 +91,40 @@ aicm questions import --file examples/questions.yml
 
 The example question set uses `site_id: example-shop`. For a real project, replace the sample domain, brand terms, and questions with your own and keep their versions stable between comparisons.
 
+### The question file
+
+A question set is a small YAML file. The minimum that works:
+
+```yaml
+set_version: "1.0.0"
+site_id: example-shop
+own_domain: example.shop
+market: ja-JP
+language: ja
+
+brand_terms:
+  - Example
+competitors: []
+
+questions:
+  - { id: Q01, text: "What is Example?", category: definition }
+  - { id: Q02, text: "How does Example compare with Rival?", category: comparison }
+
+stages:
+  smoke:
+    runs_per_question: 1
+    question_ids: [Q01]
+  initial:
+    runs_per_question: 3
+    question_ids: [Q01, Q02]
+```
+
+`aicm questions import --file questions.yml --check` validates the file and writes nothing: the stage nesting (`smoke` ⊆ `initial` ⊆ `regular` when present), `runs_per_question` (1–5), and the round-trip count per stage. Drop `--check` to store the set; `aicm questions list` shows what is stored.
+
+- `set_version` is the identity of the set. Change it in the same edit that changes a question text, or a later comparison reads as a change in citations when only the wording moved.
+- `category` is one of `definition`, `comparison`, `regulation`, `effect`, `safety`, `usage`, `purchase`, `list`, `identification`, `dosage`.
+- `competitors: []` is allowed. The import warns (`I042`) that the share table will show own / other only.
+
 ### 2. Preview the calls before spending money
 
 ```bash

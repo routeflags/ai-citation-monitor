@@ -90,6 +90,40 @@ aicm questions import --file examples/questions.yml
 
 サンプル質問ファイルの `site_id` は `example-shop` です。実際の計測では、ドメイン・ブランド名・質問文を自社用に変更してください。期間比較の際は質問セットのバージョンを管理します。
 
+### 質問ファイル
+
+質問セットは小さな YAML です。動く最小形:
+
+```yaml
+set_version: "1.0.0"
+site_id: example-shop
+own_domain: example.shop
+market: ja-JP
+language: ja
+
+brand_terms:
+  - Example
+competitors: []
+
+questions:
+  - { id: Q01, text: "Exampleとは？", category: definition }
+  - { id: Q02, text: "ExampleとRivalの違いは？", category: comparison }
+
+stages:
+  smoke:
+    runs_per_question: 1
+    question_ids: [Q01]
+  initial:
+    runs_per_question: 3
+    question_ids: [Q01, Q02]
+```
+
+`aicm questions import --file questions.yml --check` は検算だけを行い、何も書きません。見るのはステージの入れ子（`smoke` ⊆ `initial`、`regular` があればさらにその下）、`runs_per_question`（1〜5）、ステージごとの往復回数です。`--check` を外すと保存され、`aicm questions list` で中身を確認できます。
+
+- `set_version` はセットの同一性。質問文を変える編集では同じコミットでこれを上げる。上げないと、次回の比較が「引用の変化」に見えてしまう
+- `category` は `definition` / `comparison` / `regulation` / `effect` / `safety` / `usage` / `purchase` / `list` / `identification` / `dosage` のいずれか
+- `competitors: []` でも動く。その場合 import が `I042` の警告を出し、シェア表は自社 / その他の 2 列になる
+
 ### 2. API費用が発生する前に実行計画を確認
 
 ```bash
