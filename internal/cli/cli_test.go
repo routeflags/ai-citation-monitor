@@ -402,6 +402,27 @@ func TestRunWithoutCredentialSendsNothing(t *testing.T) {
 	}
 }
 
+// A recorded run must carry the app clock, not the wall clock. Providers stamp
+// the start and end of a call, so they need the same clock as the runner;
+// otherwise a report for a past period stops being reproducible once the real
+// date moves on.
+func TestRunTimestampsComeFromTheAppClock(t *testing.T) {
+	h := newHarness(t)
+	h.importQuestions()
+
+	if code, _, stderr := h.run("run", "--provider", "openai", "--stage", "smoke", "--repeat", "1", "--yes"); code != ExitOK {
+		t.Fatalf("run = %d: %s", code, stderr)
+	}
+
+	// The harness clock is 2026-11-15T03:00:00Z; a real datetime here means an
+	// adapter kept its own time.Now instead of the injected clock.
+	q := h.query("SELECT COUNT(*) FROM runs WHERE started_at_utc = '2026-11-15T03:00:00Z' AND completed_at_utc = '2026-11-15T03:00:00Z'")
+	defer q.close()
+	if got := q.int64(); got != 2 {
+		t.Fatalf("runs stamped by the app clock = %d, want 2 (2 questions x 1 repeat)", got)
+	}
+}
+
 func TestFullPipelineRecordsReportsAndExports(t *testing.T) {
 	h := newHarness(t)
 	h.importQuestions()

@@ -56,10 +56,16 @@ go test ./...         # no network, no credential, no API key
 go test -race ./...   # on Linux
 ```
 
+`make check` runs the same list (plus `golangci-lint` and `govulncheck`) in one
+command; `make tools` installs the pinned versions of both.
+
 - No test may call a real provider. Adapters are tested with `httptest` and
   fixtures that copy the shape of captured responses.
 - If you add a provider, add fixtures for: cited, not cited, provider error, empty
   answer, and a response without citation metadata.
+- A timestamp in a record comes from the injected clock (`App.Now`), never from a
+  `time.Now` call inside an adapter. A test pins a date; a stray wall-clock read
+  makes it start failing on a later day instead of the day the bug landed.
 - The exported surface (`export --format json|csv|jsonl`) is part of the contract;
   changing a column is a breaking change and needs a decision record entry.
 

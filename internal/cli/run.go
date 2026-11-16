@@ -325,19 +325,27 @@ func (a *App) buildProviders(cfg *config.Config, targets []runner.Target, rpm in
 		client := httpclient.New(timeout, rpm, cfg.Limits.MaxRetries)
 		client.Logf = a.Verbosef
 		secrets := []string{apiKey}
+		// The adapter stamps the call's start and end. It gets the same clock as
+		// the runner, so a recorded run and its timestamps come from one source
+		// (production uses time.Now; tests pin a date and must not depend on the
+		// wall clock).
+		now := a.NowUTC
 		switch target.Provider {
 		case "openai":
 			result["openai"] = openai.New(openai.Options{
 				APIKey: apiKey, BaseURL: providerCfg.BaseURL, HTTP: client, Secrets: secrets,
+				Now: now,
 			})
 		case "gemini":
 			result["gemini"] = gemini.New(gemini.Options{
 				APIKey: apiKey, BaseURL: providerCfg.BaseURL, HTTP: client, Secrets: secrets,
+				Now: now,
 			})
 		case "anthropic":
 			result["anthropic"] = anthropic.New(anthropic.Options{
 				APIKey: apiKey, BaseURL: providerCfg.BaseURL, HTTP: client, Secrets: secrets,
 				MaxTokens: cfg.Providers.Anthropic.MaxTokens, MaxUses: cfg.Providers.Anthropic.MaxUses,
+				Now: now,
 			})
 		}
 	}
