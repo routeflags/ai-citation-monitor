@@ -18,7 +18,7 @@ import (
 
 // Build is the tool version written into every run (release builds override it
 // with the tag through -X).
-var Build = "0.1.2"
+var Build = "0.1.3"
 
 // ToolVersion includes the normalisation rules version: together they decide what
 // cited_own and brand_mentioned mean, so records from different versions are not

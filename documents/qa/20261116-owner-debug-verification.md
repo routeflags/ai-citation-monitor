@@ -1,17 +1,17 @@
-# オーナーによるデバッグ検証（v0.1.2）
+# オーナーによるデバッグ検証（v0.1.3）
 
-この文書は、公開済みの `v0.1.2` を**壊しに行く**ための手順である。CI とテストは実プロバイダーを
+この文書は、公開済みの `v0.1.3` を**壊しに行く**ための手順である。CI とテストは実プロバイダーを
 呼ばない（鍵もネットワークも使わない）ので、live API の経路はここでしか確認されない。
 
-- 対象: `v0.1.2` の公開バイナリ（この手順はソースツリーに依存しない）
-- 前提: 端末で `aicm` が引ける状態。`aicm version` が `0.1.2 (tool_version 0.1.2+norm3)` を返すこと
+- 対象: `v0.1.3` の公開バイナリ（この手順はソースツリーに依存しない）
+- 前提: 端末で `aicm` が引ける状態。`aicm version` が `0.1.3 (tool_version 0.1.3+norm3)` を返すこと
 - 課金: **Phase A は 0 円**。Phase B だけが実際の API 利用料金を伴う。B は明示的に進めるときだけ実行する
 
 ## 0. 取得と照合
 
 ```bash
 mkdir -p ~/tmp/aicm-debug/pkg && cd ~/tmp/aicm-debug/pkg
-VERSION=0.1.2
+VERSION=0.1.3
 ARCHIVE=ai-citation-monitor_${VERSION}_darwin_arm64.tar.gz   # 環境に合わせる
 BASE=https://github.com/routeflags/ai-citation-monitor/releases/download/v${VERSION}
 curl -LO "$BASE/$ARCHIVE" && curl -LO "$BASE/checksums.txt"
@@ -22,7 +22,7 @@ aicm version
 
 展開先には `examples/` と `docs/` も入る（A1 で `examples/questions.yml` を使うので、この場に残す）。
 
-期待: `aicm 0.1.2 (tool_version 0.1.2+norm3)`、`live API: observed once per provider (...)`、
+期待: `aicm 0.1.3 (tool_version 0.1.3+norm3)`、`live API: observed once per provider (...)`、
 `tests: never call a provider; CI uses fixtures and httptest only`。
 
 ## 1. 鍵と作業場所
