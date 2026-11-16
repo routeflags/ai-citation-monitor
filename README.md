@@ -219,10 +219,9 @@ Phase 1 is a **CLI-only** tool supporting OpenAI, Gemini, and Anthropic. It does
 
 ## Philosophy
 
-Structures nobody reviews, social ones included, accumulate as technical debt.
-The same stance decides what this tool will and will not claim.
+This column outlines the principles that guide how we engage with OSS. These principles are the reason we continue our day-to-day OSS activities and writing. It reframes long-unreviewed social structures as a form of technical debt. We would be glad if you take a look.
 
-- [Engineering blog: Society also has technical debt](https://www.thch-vape.shop/guide/column/git-log--oneline--all--society)
+- [Engineering Blog: Society Also Has Technical Debt](https://www.thch-vape.shop/guide/column/git-log--oneline--all--society)
 
 ## License
 

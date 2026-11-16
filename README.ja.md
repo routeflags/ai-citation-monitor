@@ -216,12 +216,11 @@ Phase 1 は **CLI専用**で、OpenAI・Gemini・Anthropicに対応します。W
 - [コントリビューション](CONTRIBUTING.md)と[セキュリティ](SECURITY.md)
 - [Phase 1 決定記録](documents/decisions/)
 
-## 考え方（Philosophy）
+## Philosophy
 
-誰も見直さない構造は、社会のそれを含めて技術的負債として積み上がる。このツールが何を主張し、何を
-主張しないかも、この姿勢から決めている。
+This column outlines the principles that guide how we engage with OSS. These principles are the reason we continue our day-to-day OSS activities and writing. It reframes long-unreviewed social structures as a form of technical debt. We would be glad if you take a look.
 
-- [エンジニアリングブログ：社会にも技術的負債はある](https://www.thch-vape.shop/guide/column/git-log--oneline--all--society)
+- [Engineering Blog: Society Also Has Technical Debt](https://www.thch-vape.shop/guide/column/git-log--oneline--all--society)
 
 ## ライセンス
 
