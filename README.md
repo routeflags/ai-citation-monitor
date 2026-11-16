@@ -1,6 +1,10 @@
 # AI Citation Monitor (`aicm`)
 
+![AI Citation Monitor: the CLI title card over its own metrics — citation rate, brand mentions, competitor comparison, trends](docs/assets/hero.png)
+
 **Measure how often AI-generated answers cite your website—reproducibly, from the command line.**
+
+<sub>The image is an illustration; the numbers in it are not a measurement.</sub>
 
 AI Citation Monitor is an open-source, Go-based CLI for measuring **GEO (Generative Engine Optimization)** and **AEO (Answer Engine Optimization)** outcomes. It runs a versioned set of questions against search-enabled AI APIs, stores citation evidence in SQLite, and reports visibility, competitor comparisons, and changes over time.
 

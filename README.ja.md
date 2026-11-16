@@ -1,6 +1,10 @@
 # AI Citation Monitor（`aicm`）
 
+![AI Citation Monitor：CLI のタイトルカードと、引用率・ブランド言及・競合比較・トレンドの指標](docs/assets/hero.png)
+
 **生成AIの回答に自社サイトがどれだけ引用されているかを、CLIで再現可能な形で計測するツール。**
+
+<sub>画像はイメージです。図中の数値は計測結果ではありません。</sub>
 
 AI Citation Monitor は、**GEO（Generative Engine Optimization）**と**AEO（Answer Engine Optimization）**の成果を計測する、Go製のオープンソースCLIです。バージョン管理された質問セットを検索機能付きAI APIに送信し、引用の証拠をSQLiteに保存。自社・競合の引用状況や期間別トレンドを分析します。
 
