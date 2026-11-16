@@ -1,113 +1,183 @@
-# ai-citation-monitor（`aicm`）
+# AI Citation Monitor（`aicm`）
 
-AI の回答が自社サイトを引用しているかを計測する CLI。引用率・ブランド言及率・質問カバー率・
-競合の引用・トレンドを、後から再現できる形で記録する。
+**生成AIの回答に自社サイトがどれだけ引用されているかを、CLIで再現可能な形で計測するツール。**
 
-> **これは標本についての測定です。** AI サービスは全回答ログを公開していないため、ここに
-> 出る率は「この質問セットを・このモデルで・この回数実行した」範囲の観測です。ChatGPT /
-> Gemini の一般向け画面や全ユーザーの結果を代表しません。レポートの冒頭にこの固定文が
-> 必ず出ます（無効にできません）。
+AI Citation Monitor は、**GEO（Generative Engine Optimization）**と**AEO（Answer Engine Optimization）**の成果を計測する、Go製のオープンソースCLIです。バージョン管理された質問セットを検索機能付きAI APIに送信し、引用の証拠をSQLiteに保存。自社・競合の引用状況や期間別トレンドを分析します。
 
-English: [README.md](README.md).
+[English](README.md) · [CLIリファレンス](docs/cli-reference.md) · [指標定義](docs/metrics.md) · [プロバイダー仕様](docs/providers.md)
 
-## 状態（Phase 1 / MVP）
+> [!IMPORTANT]
+> **計測結果は標本の観測値であり、AI検索全体の順位ではありません。** 指標が表すのは、設定した質問・プロバイダー・モデル・ステージ・実行回数の範囲だけです。一般ユーザーが利用するChatGPT・Gemini・Claudeのすべての回答を代表するものではありません。生成レポートには、この制約についての注意書きが必ず表示されます。
 
-この表は意図的に厳しくしている。このリポジトリの検査で確かめたものだけを「検証済み」と書く。
+## このツールでできること
 
-| 領域 | 状態 |
-|---|---|
-| `init` / `questions add,list,import` / `run --dry-run` / `report` / `compare` / `trends` / `export` / `verify` | **検証済み**（`go test ./...`、オフライン） |
-| OpenAI アダプター（Responses API + `web_search`） | **live で 1 回観測済み**（2026-11-15、`gpt-6.1-sol`）。引用 annotation・usage・実 401 を確認。1 モデル 1 問の観測であり、他のモデルの保証ではない |
-| Gemini アダプター（`generateContent` + `google_search`） | **live で 1 回観測済み**（2026-11-15、`gemini-3.1-pro-preview`）。grounding の chunk は不透明なリダイレクトで、実際の引用元は chunk 側の値。アダプターはそれを hint として記録する |
-| Anthropic アダプター（Messages API + `web_search_20250305`） | **live で 1 回観測済み**（2026-11-15、`claude-sonnet-5-5`）。text ブロックの citations・usage・web_search 呼び出しを確認。`max_tokens` の既定は 8192 で、打ち切られた回答はエラーとして記録する |
-| 引用メタデータからの抽出 | **検証済み**（cited / not-cited / error / empty / メタデータなし の fixture） |
-| リトライ（429/502/503/504・`Retry-After`）・レート制限・並列・Ctrl+C 再開 | **検証済み**（単体テスト） |
-| 実 API での計測 | **行っていない**。課金と認証が必要なため、オーナーの明示判断があるときだけ行う |
+従来のSEO解析だけでは「特定のAI回答が自社サイトを引用したか」を直接確認できません。`aicm` はこれを検証・再集計できるようにします。
 
-## 何を測るか
-
-7 つの数字。率には必ず分母 `n` が付く（定義は [docs/metrics.md](docs/metrics.md)）。
-
-1. **GEO 引用率** — 引用判定が可能な成功回答のうち、自社ドメインが 1 回以上引用された割合
-2. **ブランド言及率** — 成功回答のうち、登録したブランド語に言及した割合
-3. **AEO 質問別獲得率** — 質問ごとの、自社が引用された回答の割合
-4. **AEO 質問カバー率** — 引用判定可能な回答が 1 件以上ある質問のうち、自社引用が一度でもあった質問の割合
-5. **競合引用獲得率** — ドメイン別に、その回答が引用された割合（合計は 100% を超え得る）
-6. **引用シェア** — グループ内の引用総件数に対するドメイン別の割合（分母のスコープを表示）
-7. **トレンド** — 日・週・月の系列と、前期間との差（percentage points）
-
-データモデルで強制している 2 つの規則:
-
-- **プロバイダー・モデル・stage をまたいだ合計を出さない**（率はグループ内で閉じる）
-- **`n = 0` は `—（未測定）`**。失敗や引用メタデータなしの回答は件数として数え、分母から外す。
-  「引用なし」と混同しない
+- **引用の計測：** 回答本文からURLを推測せず、APIが返す引用メタデータに基づいて判定
+- **ブランド・質問別分析：** ブランド言及率、質問ごとの引用率、質問カバー率を集計
+- **競合比較：** 同じ計測条件で競合ドメインの引用率・シェアを比較
+- **時系列分析：** 期間比較と日次・週次・月次トレンド
+- **再現性：** 質問バージョン、モデル、API条件、時刻、回答ハッシュ、必要に応じた生レスポンスを記録
+- **自動処理との連携：** JSON出力とCSV/JSON/JSONLエクスポート。Web UIやSaaSへの登録は不要
 
 ## インストール
 
-Releases にバイナリ（macOS arm64/amd64、Linux arm64/amd64、Windows amd64）を置く。
-ソースからは:
+`aicm` は依存のない単体バイナリです（Cコンパイラ・ランタイム不要）。macOS と Linux の amd64/arm64、Windows の amd64 で動作します。
+
+### ビルド済みバイナリ（推奨）
+
+[最新リリース](https://github.com/routeflags/ai-citation-monitor/releases/latest) から、お使いの環境のアーカイブと、並べて公開されている `checksums.txt` をダウンロードします。
+
+| 環境 | アーカイブ |
+|---|---|
+| macOS（Apple シリコン） | `ai-citation-monitor_<version>_darwin_arm64.tar.gz` |
+| macOS（Intel） | `ai-citation-monitor_<version>_darwin_amd64.tar.gz` |
+| Linux（x86-64） | `ai-citation-monitor_<version>_linux_amd64.tar.gz` |
+| Linux（arm64） | `ai-citation-monitor_<version>_linux_arm64.tar.gz` |
+| Windows（x86-64） | `ai-citation-monitor_<version>_windows_amd64.zip` |
+
+実行する前に、公開された checksum と照合してください。
+
+```bash
+VERSION=0.1.2                                       # ダウンロードしたリリース
+ARCHIVE=ai-citation-monitor_${VERSION}_darwin_arm64.tar.gz   # 自分の環境に合わせる
+
+grep "$ARCHIVE" checksums.txt | shasum -a 256 -c -  # Linux は ... | sha256sum -c -
+tar xzf "$ARCHIVE"
+mkdir -p ~/.local/bin && install -m 0755 aicm ~/.local/bin/aicm   # または: sudo install -m 0755 aicm /usr/local/bin/aicm
+aicm version
+```
+
+アーカイブはディレクトリを作らず、`aicm`・`LICENSE`・README・`docs/`・`examples/` を展開します。Windows では `(Get-FileHash .\ai-citation-monitor_0.1.2_windows_amd64.zip -Algorithm SHA256).Hash` を `checksums.txt` の値と照合し、`.zip` を展開してフォルダを `PATH` に追加してください。
+
+### Go で入れる
+
+**Go 1.26.11 以上**（`go.mod` の指定）が必要です。
 
 ```bash
 go install github.com/routeflags/ai-citation-monitor/cmd/aicm@latest
 ```
 
-## 最短の手順
+インストール先は `$(go env GOBIN)`、`GOBIN` が未設定なら `$(go env GOPATH)/bin` です。そのディレクトリが `PATH` に入っている必要があります。
+
+### ソースからビルドする
 
 ```bash
-aicm init --non-interactive --site-id example-shop --own-domain example.shop \
+git clone https://github.com/routeflags/ai-citation-monitor
+cd ai-citation-monitor
+make aicm     # ./aicm ができる（git のバージョンで刻印。`go build -o aicm ./cmd/aicm` でも可）
+make check    # gofmt・vet・build・test・race・lint・govulncheck（CI と同じ検査）
+```
+
+Homebrew・apt/dnf・Scoop・コンテナイメージは用意していません。上の 3 つのいずれかを使ってください。
+
+## クイックスタート
+
+### 1. プロジェクト作成と質問の登録
+
+```bash
+aicm init --non-interactive \
+  --site-id example-shop \
+  --own-domain example.shop \
   --brand-terms "Example"
 
 aicm questions import --file examples/questions.yml
+```
 
-# 鍵が無くても計画だけ出せる（認証は別行で表示され、実 run なら exit 3）
-aicm run --provider openai --stage smoke --repeat 1 --dry-run
+サンプル質問ファイルの `site_id` は `example-shop` です。実際の計測では、ドメイン・ブランド名・質問文を自社用に変更してください。期間比較の際は質問セットのバージョンを管理します。
 
-export OPENAI_API_KEY=...          # 設定ファイルには環境変数の「名前」だけを書く
+### 2. API費用が発生する前に実行計画を確認
 
-aicm run --provider openai --stage smoke --repeat 1 --yes
+```bash
+aicm run --provider openai --model YOUR_SUPPORTED_MODEL \
+  --stage smoke --repeat 1 --dry-run
+```
 
+`--dry-run` はAPIにリクエストを送信せず、APIキーも必要ありません。金額の見積り機能ではないため、利用料金は各プロバイダーの料金表で確認してください。
+
+### 3. 実際に計測する
+
+```bash
+export OPENAI_API_KEY="your-api-key"
+
+aicm run --provider openai --model YOUR_SUPPORTED_MODEL \
+  --stage smoke --repeat 1 --yes
+```
+
+モデルは `--model` または `aicm.toml` で明示する必要があります。**実計測では外部APIの利用料金が発生する可能性があります。** 最初は少数の質問で検証し、必要に応じて `--limit` を使ってください。APIキーを設定ファイルやGitに保存しないでください。
+
+### 4. レポート・比較・検証
+
+```bash
 aicm report --period 30d
+aicm compare --period 30d --baseline previous
+aicm trends --interval weekly --period 90d
 aicm verify
 ```
 
-## 終了コード
+レポートは設定したディレクトリ（デフォルト `reports/`）に保存されます。集計データの外部利用には `aicm export` を使います。
 
-| コード | 意味 |
+## 計測指標
+
+| 指標 | 意味 |
 |---|---|
-| 0 | 成功 |
-| 1 | 検証に落ちた／一部の計測が失敗した（記録は残る） |
-| 2 | 設定・使い方の誤り |
-| 3 | 認証が無い（1 回も送っていない） |
-| 4 | API・通信の失敗 |
+| **GEO引用率** | 引用判定可能な成功回答のうち、自社ドメインを1回以上引用した割合 |
+| **ブランド言及率** | 成功回答のうち、登録したブランド語を含む割合 |
+| **AEO質問別引用率** | 質問ごとに算出した自社引用率 |
+| **AEO質問カバー率** | 引用判定可能な質問のうち、自社引用が1回以上あった質問の割合 |
+| **競合引用率** | 各競合ドメインが引用された回答の割合 |
+| **引用シェア** | 対象グループ・分母における各ドメインの引用件数シェア |
+| **トレンド** | 時系列と前期間との差（パーセントポイント） |
 
-失敗には機械可読な `reason` も付く（`--json` の `error.reason`）。
+**数値の読み方：** 率には必ず分母 `n` を表示します。`n = 0` は「未測定」であって「引用率0%」ではありません。失敗したリクエストや引用メタデータの有無を判定できない回答を、単純な「引用なし」に置き換えません。また、**プロバイダー × モデル × ステージ**をまたぐ率の合算は行いません。1つの回答が複数の競合を引用するため、競合引用率の合計は100%を超える場合があります。計算式は[指標定義](docs/metrics.md)を参照してください。
 
-## 何を保存し、何を保存しないか
+## コマンド一覧
 
-- 記録の正は SQLite。1 回の呼び出し = 1 行で、条件（プロバイダー・モデル・API エンドポイント版・
-  検索の有効化・測定方法・質問セット版と sha256・開始/完了時刻 UTC）を併記する
-- 回答本文と生 JSON は保存する（引用を後から検証できるように）。**認証情報の値は保存しない**
-  （アダプターがエラーメッセージと生 JSON から除去する）
-- `store_answer_body = false`（または `run --store hash-only`）なら**回答のハッシュだけ**を保存する。
-  DB を Git 追跡する場合はこちら。率は変わらず、`verify` は空の本文を「意図」として扱うが、
-  本文の再検証はできなくなる
-- 失敗も記録する。再開時は記録済みの呼び出しをスキップするので、Ctrl+C で二重課金しない
-- `aicm verify` が DB 自身の整合性を検査する（回答の欠落、引用の参照切れ、本文とハッシュの不一致等）
+| コマンド | 機能 |
+|---|---|
+| `aicm init` | 設定ファイルとSQLiteの初期化 |
+| `aicm questions add\|list\|import` | 質問の追加・一覧・インポート |
+| `aicm run` | API計測・事前確認・実行記録 |
+| `aicm report` | Markdownレポート生成 |
+| `aicm compare` | 期間別比較 |
+| `aicm trends` | 日次・週次・月次トレンド |
+| `aicm competitors add\|list\|remove` | 競合ドメインの管理 |
+| `aicm export` | CSV/JSON/JSONL出力 |
+| `aicm verify` | 保存した証拠と参照関係の整合性チェック |
+| `aicm version` | バージョンとAPI情報の表示 |
 
-## ドキュメント
+共通フラグ `--json` を使うと標準出力をJSONに統一し、診断メッセージは標準エラー出力に送ります。全オプションと終了コードは[CLIリファレンス](docs/cli-reference.md)を参照してください。
 
-- [docs/architecture.md](docs/architecture.md)（英語）— パッケージ構成・データフロー・スキーマ
-- [docs/metrics.md](docs/metrics.md)（英語）— 各指標の分子と分母
-- [docs/providers.md](docs/providers.md)（英語）— エンドポイント・引用メタデータ・リトライ・未検証事項
-- [docs/cli-reference.md](docs/cli-reference.md)（英語）— 全コマンドとフラグ
-- [documents/decisions](documents/decisions/) — Phase 1 の決定記録（日本語）
+## 対応AIと検証状況
 
-## スコープ
+| プロバイダー | API | 検証状況 |
+|---|---|---|
+| OpenAI | Responses API + `web_search` | **2026-11-15** に1モデル・1質問で実API観測。オフラインのfixtureテストあり |
+| Google Gemini | `generateContent` + `google_search` | **2026-11-15** に1モデル・1質問で実API観測。オフラインのfixtureテストあり |
+| Anthropic Claude | Messages API + `web_search_20250305` | **2026-11-15** に1モデル・1質問で実API観測。オフラインのfixtureテストあり |
 
-- ビルドには Go 1.26 以上。実行は単一バイナリ
-- CLI のみ。Web UI・サーバー・外部 DB・定期実行は作らない
-- Phase 1 のプロバイダーは OpenAI・Gemini・Anthropic (Claude)（Perplexity は対象外）
+上記の実API確認は**特定条件での単発観測**であり、あらゆるモデルの動作や本番計測の完了を意味しません。全質問セットでの実API計測は未実施です。引用抽出、リトライ、レート制限、並列実行、中断・再開についてもテストがあります。詳細は[プロバイダー仕様](docs/providers.md)を参照してください。
+
+## 保存データ・費用・安全性
+
+- **ローカル保存：** SQLiteが原本です。外部DBや専用サーバーは不要です。
+- **証拠の保存：** 通常モードは回答本文とAPIの生JSONを保存し、認証情報は除去します。`aicm run --store hash-only` または `store_answer_body = false` で本文と生JSONの保存を省略できますが、後から内容を再確認することはできません。
+- **中断・再開：** 同じ質問バージョン・プロバイダー・モデル・反復回数・ステージ・セッションについて、記録済みの呼び出しは再送信しません。**失敗記録も再送信されない**ため、問題解決後に再計測する場合は別の `--session` を指定します。
+- **費用管理：** 対話環境では実行確認が必要です。非対話で実行する際は `--yes` を指定します。HTTPリトライによって追加課金が発生する可能性があります。
+- **限界：** 引用率は質問設計、言語・地域、モデル・APIの仕様、計測時期に左右されます。検索順位や売上向上を保証する指標ではありません。
+
+## スコープとドキュメント
+
+Phase 1 は **CLI専用**で、OpenAI・Gemini・Anthropicに対応します。Web UI、サーバー、スケジューラー、Perplexityアダプターは対象外です。
+
+- [アーキテクチャ](docs/architecture.md) — コード構造・データフロー・保存方法
+- [指標定義](docs/metrics.md) — 各指標の正確な分子と分母
+- [プロバイダー仕様](docs/providers.md) — 引用メタデータ・API上の留意点
+- [CLIリファレンス](docs/cli-reference.md) — コマンド・フラグ・エラー処理
+- [設定例](examples/config.toml)と[質問例](examples/questions.yml)
+- [コントリビューション](CONTRIBUTING.md)と[セキュリティ](SECURITY.md)
+- [Phase 1 決定記録](documents/decisions/)
 
 ## ライセンス
 
-Apache-2.0。[LICENSE](LICENSE) を参照。
+Apache License 2.0。[LICENSE](LICENSE)を参照してください。

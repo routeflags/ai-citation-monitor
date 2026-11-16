@@ -1,162 +1,184 @@
-# ai-citation-monitor (`aicm`)
+# AI Citation Monitor (`aicm`)
 
-Measure whether AI answers cite your site: citation rate, brand mention rate,
-question coverage, competitor citations and trends, recorded so that every number
-can be reproduced later.
+**Measure how often AI-generated answers cite your website—reproducibly, from the command line.**
 
-> **These numbers are measurements of a sample.** An AI service does not expose
-> its whole answer log, so every rate here is the observation of "this question
-> set, this model, this many runs". They do **not** represent the consumer
-> ChatGPT / Gemini UI or every user's answer. Every report starts with this
-> statement, and it cannot be turned off.
+AI Citation Monitor is an open-source, Go-based CLI for measuring **GEO (Generative Engine Optimization)** and **AEO (Answer Engine Optimization)** outcomes. It runs a versioned set of questions against search-enabled AI APIs, stores citation evidence in SQLite, and reports visibility, competitor comparisons, and changes over time.
 
-日本語版: [README.ja.md](README.ja.md).
+[日本語](README.ja.md) · [CLI reference](docs/cli-reference.md) · [Metrics](docs/metrics.md) · [Providers](docs/providers.md)
 
-## Status (Phase 1 / MVP)
+> [!IMPORTANT]
+> **These are sample-based observations, not overall AI search rankings.** Results describe the configured questions, providers, models, stages, and runs only. They do not represent every user's ChatGPT, Gemini, or Claude experience. The same disclaimer is mandatory in generated reports.
 
-The table is deliberate: a row is "verified" only when a check in this repository
-proves it. Nothing claims to have been measured against a live API.
+## Why use it?
 
-| Area | State |
+Traditional SEO analytics cannot directly tell you whether a particular AI answer cited your website. `aicm` makes that question testable and auditable:
+
+- **Evidence-based citation tracking:** extract citations from provider response metadata, not URLs guessed from answer text.
+- **Brand and question visibility:** track brand mentions, per-question citation rates, and question coverage.
+- **Competitor comparisons:** measure competing domains under the same test conditions.
+- **Historical trends:** compare periods and display daily, weekly, or monthly changes.
+- **Reproducibility:** preserve question versions, model and API conditions, timestamps, answer hashes, and—when enabled—raw responses.
+- **Automation-friendly CLI:** JSON output, stable exit codes, and CSV/JSON/JSONL exports; no web UI or hosted account required.
+
+## Installation
+
+`aicm` is one static binary — no C compiler, no runtime dependency — for macOS
+and Linux on amd64 and arm64, and for Windows on amd64.
+
+### Prebuilt binary
+
+Download the archive for your platform from the [latest release](https://github.com/routeflags/ai-citation-monitor/releases/latest), together with the `checksums.txt` published beside it:
+
+| Platform | Archive |
 |---|---|
-| `init` / `questions add,list,import` / `run --dry-run` / `report` / `compare` / `trends` / `export` / `verify` | **Verified** by `go test ./...` (offline) |
-| OpenAI adapter (Responses API + `web_search`) | **Observed once against the live API** (2026-11-15, `gpt-6.1-sol`): annotations as citations, usage, and a real 401. One model, one question: not a statement about other models |
-| Gemini adapter (`generateContent` + `google_search`) | **Observed once against the live API** (2026-11-15, `gemini-3.1-pro-preview`): grounding chunks arrive as opaque redirects and the real site comes from the chunk, which the adapter records as a hint |
-| Anthropic adapter (Messages API + `web_search_20250305`) | **Observed once against the live API** (2026-11-15, `claude-sonnet-5-5`): text-block citations, usage, `web_search` tool call. `max_tokens` defaults to 8192; a cut-off answer is recorded as an error |
-| Citation extraction from provider metadata | **Verified** with fixtures for cited / not-cited / error / empty / no-metadata responses |
-| Retry (429 / 502 / 503 / 504, `Retry-After`), rate limit, concurrency, Ctrl+C resume | **Verified** by unit tests |
-| A real measurement programme (a full question set for a live site) | **Not done.** The three live runs above were one question each; a production run spends money and is an owner decision |
+| macOS, Apple silicon | `ai-citation-monitor_<version>_darwin_arm64.tar.gz` |
+| macOS, Intel | `ai-citation-monitor_<version>_darwin_amd64.tar.gz` |
+| Linux, x86-64 | `ai-citation-monitor_<version>_linux_amd64.tar.gz` |
+| Linux, arm64 | `ai-citation-monitor_<version>_linux_arm64.tar.gz` |
+| Windows, x86-64 | `ai-citation-monitor_<version>_windows_amd64.zip` |
 
-## What it measures
+Check the archive against the published checksum before running it:
 
-Seven numbers, each with its denominator always printed (`docs/metrics.md`):
+```bash
+VERSION=0.1.2                                       # the release you downloaded
+ARCHIVE=ai-citation-monitor_${VERSION}_darwin_arm64.tar.gz   # your platform
 
-1. **GEO citation rate** — of the answers that succeeded and returned citation
-   metadata, the share that cited your domain at least once.
-2. **Brand mention rate** — of the successful answers, the share that mentioned a
-   registered brand term.
-3. **AEO question citation rate** — per question, the share of answers that cited
-   you.
-4. **AEO question coverage** — of the questions with at least one judgeable
-   answer, the share that ever produced a citation of you.
-5. **Competitor citation rate** — per domain, the share of answers that cited it.
-   One answer can cite several domains, so the column does not add up to 100%.
-6. **Citation share** — per domain, its portion of all citations in the group.
-   The scope of the denominator is printed.
-7. **Trend** — daily / weekly / monthly series with the difference in percentage
-   points against the previous bucket.
+grep "$ARCHIVE" checksums.txt | shasum -a 256 -c -  # Linux: ... | sha256sum -c -
+tar xzf "$ARCHIVE"
+mkdir -p ~/.local/bin && install -m 0755 aicm ~/.local/bin/aicm   # or: sudo install -m 0755 aicm /usr/local/bin/aicm
+aicm version
+```
 
-Two rules are enforced in the data model, not in the documentation:
+The archive has no directory level: it holds `aicm`, `LICENSE`, the READMEs, `docs/` and `examples/`. On Windows, compare `(Get-FileHash .\ai-citation-monitor_0.1.2_windows_amd64.zip -Algorithm SHA256).Hash` with the line in `checksums.txt`, expand the `.zip`, and put the folder on your `PATH`.
 
-- **No totals across providers, models or stages.** A rate divides inside one
-  `provider x model x stage` group.
-- **`n = 0` is `— (not measured)`, never `0.0%`.** A failure or an answer without
-  citation metadata is counted and excluded from the denominator; it is never
-  treated as "no citation".
+### With Go
 
-## Install
-
-Prebuilt binaries (macOS arm64/amd64, Linux arm64/amd64, Windows amd64) are
-published on the Releases page. Or build from source:
+Go **1.26.11 or newer** (per `go.mod`):
 
 ```bash
 go install github.com/routeflags/ai-citation-monitor/cmd/aicm@latest
 ```
 
-## Quickstart
+`go install` writes to `$(go env GOBIN)`, or to `$(go env GOPATH)/bin` when `GOBIN` is unset; that directory has to be on your `PATH`.
+
+### From source
 
 ```bash
-# 1) configuration + project row (no credential is written)
-aicm init --non-interactive --site-id example-shop --own-domain example.shop \
+git clone https://github.com/routeflags/ai-citation-monitor
+cd ai-citation-monitor
+make aicm     # ./aicm, stamped with the git version (`go build -o aicm ./cmd/aicm` also works)
+make check    # gofmt, vet, build, test, race, lint, govulncheck — what CI runs
+```
+
+There is no Homebrew, apt/dnf, Scoop or container package yet; pick one of the three ways above.
+
+## Quick start
+
+### 1. Create a project and import questions
+
+```bash
+aicm init --non-interactive \
+  --site-id example-shop \
+  --own-domain example.shop \
   --brand-terms "Example"
 
-# 2) questions (YAML contract or CSV)
 aicm questions import --file examples/questions.yml
+```
 
-# 3) look before you spend: plan, estimate, auth check, zero network calls
-#    (a missing key is reported, not required: the plan prints anyway)
-aicm run --provider openai --stage smoke --repeat 1 --dry-run
+The example question set uses `site_id: example-shop`. For a real project, replace the sample domain, brand terms, and questions with your own and keep their versions stable between comparisons.
 
-# 4) export the key into the environment (the config only names the variable)
-export OPENAI_API_KEY=...
+### 2. Preview the calls before spending money
 
-# 5) run it
-aicm run --provider openai --stage smoke --repeat 1 --yes
+```bash
+aicm run --provider openai --model YOUR_SUPPORTED_MODEL \
+  --stage smoke --repeat 1 --dry-run
+```
 
-# 6) aggregate and report
+`--dry-run` does not call a provider or require an API key. The tool does not calculate a monetary quote; check provider pricing separately.
+
+### 3. Run a measurement
+
+```bash
+export OPENAI_API_KEY="your-api-key"
+
+aicm run --provider openai --model YOUR_SUPPORTED_MODEL \
+  --stage smoke --repeat 1 --yes
+```
+
+Models must be specified with `--model` or in `aicm.toml`; the tool does not guess a model. **A real run calls a paid third-party API.** Start with a small question set and `--limit` if needed. Keep API keys out of configuration files and version control.
+
+### 4. Inspect the results
+
+```bash
 aicm report --period 30d
-
-# 7) check that the records still hold their own evidence
+aicm compare --period 30d --baseline previous
+aicm trends --interval weekly --period 90d
 aicm verify
 ```
 
-`aicm run` with no `--dry-run` stops at the first missing piece: a bad
-configuration exits 2, a missing credential exits 3 (and nothing is sent).
+Reports are written to the configured report directory (default `reports/`). For CSV or JSON data use `aicm export`.
 
-## Commands
+## Metrics
+
+| Metric | Interpretation |
+|---|---|
+| **GEO citation rate** | Share of successful answers with judgeable citation metadata that cited your domain at least once |
+| **Brand mention rate** | Share of successful answers containing a registered brand term |
+| **AEO per-question citation rate** | Citation rate calculated separately for each question |
+| **AEO question coverage** | Share of judgeable questions that cited your domain at least once |
+| **Competitor citation rate** | Share of judgeable answers citing each registered competitor domain |
+| **Citation share** | A domain's share of citations in the stated group and denominator |
+| **Trends** | Time-series measurements and changes in percentage points from the preceding bucket |
+
+**Interpretation matters:** every rate reports its denominator `n`. `n = 0` means *not measured*, never 0% visibility. Failed calls or responses without citation observability are not silently treated as uncited answers. Rates are grouped by **provider × model × stage**, rather than mixed across incompatible conditions. Competitor citation rates can add up to more than 100% because an answer can cite multiple domains. For exact numerators and denominators, see [metrics definitions](docs/metrics.md).
+
+## CLI commands
 
 | Command | Purpose |
 |---|---|
-| `aicm init` | Create `aicm.toml` and the database project row (interactive or `--non-interactive`) |
-| `aicm questions add\|list\|import` | Manage the fixed question set |
-| `aicm run` | Ask the questions of the official search-enabled APIs and record every call |
-| `aicm report` | Markdown report for a period |
-| `aicm compare` | Two periods, per group, difference in percentage points |
-| `aicm trends` | Daily / weekly / monthly series |
-| `aicm competitors add\|list\|remove` | Domains to compare against |
-| `aicm export` | CSV / JSON / JSONL from the database |
-| `aicm verify` | Check the database against itself (missing answers, broken references, edited text) |
-| `aicm version` | Tool version and the API surfaces this build speaks |
+| `aicm init` | Initialize project configuration and SQLite storage |
+| `aicm questions add\|list\|import` | Manage and version questions |
+| `aicm run` | Execute, preview, and record provider calls |
+| `aicm report` | Generate a Markdown report |
+| `aicm compare` | Compare periods under recorded conditions |
+| `aicm trends` | Display daily, weekly, or monthly trends |
+| `aicm competitors add\|list\|remove` | Manage competitor domains |
+| `aicm export` | Export CSV, JSON, or JSONL |
+| `aicm verify` | Check stored evidence and referential integrity |
+| `aicm version` | Display build and provider API information |
 
-`--json` makes stdout JSON only (logs go to stderr). Full flags and output shapes:
-[docs/cli-reference.md](docs/cli-reference.md).
+Global `--json` mode keeps stdout machine-readable and sends diagnostics to stderr. See the [complete CLI reference](docs/cli-reference.md) for command flags, output examples, and exit codes.
 
-## Exit codes
+## Supported providers and validation status
 
-| Code | Meaning |
-|---|---|
-| 0 | Success |
-| 1 | Validation failed, or part of the measurement failed (the records are kept) |
-| 2 | Configuration or usage problem |
-| 3 | Credential missing — nothing was sent |
-| 4 | API or transport failure |
+| Provider | Integration | Evidence level |
+|---|---|---|
+| OpenAI | Responses API + `web_search` | One live single-question observation on **2026-11-15**; offline fixture tests |
+| Google Gemini | `generateContent` + `google_search` | One live single-question observation on **2026-11-15**; offline fixture tests |
+| Anthropic Claude | Messages API + `web_search_20250305` | One live single-question observation on **2026-11-15**; offline fixture tests |
 
-Every failure also carries a stable `reason` string (`--json`: `error.reason`), so
-a script can tell "no credential" from "bad config" without parsing text.
+These observations verify specific response shapes, **not universal model support or a completed production measurement**. A full live question-set study has not been performed. Tests also cover citation extraction, retry behavior, rate limits, concurrent calls, and interruption/resume behavior. See [provider details](docs/providers.md).
 
-## What is stored, and what is not
+## Privacy, reliability, and cost
 
-- The database is the source of truth. One row per attempted call, with the
-  conditions attached: provider, model, API endpoint version, search enabled,
-  measurement method, question set version and hash, start and end time (UTC).
-- The answer text and the provider's raw JSON are stored, so a citation can be
-  re-checked later. Credential values are never written: the adapters redact them
-  from error messages and from the stored raw JSON.
-- `store_answer_body = false` (or `run --store hash-only`) keeps only the answer
-  hash. Use it when the database is committed: the rates do not change, `verify`
-  knows the empty body is deliberate, and the text can no longer be re-checked.
-- A call is recorded even when it fails. A resumed run skips the calls already
-  recorded (same question version, provider, model, repeat, stage and session),
-  so a Ctrl+C never pays twice.
-- `aicm verify` checks the database against itself: a run without an answer, a
-  citation pointing at a missing response, an answer whose stored hash no longer
-  matches, a successful run with an empty answer.
+- **Local-first:** SQLite is the source of truth; no hosted backend or external database is required.
+- **Evidence retention:** full mode stores answer text and provider JSON for later inspection, with credential redaction. Use `aicm run --store hash-only` or `store_answer_body = false` to omit those bodies; it preserves aggregate metrics but limits later reinspection.
+- **Resumable:** previously recorded question/provider/model/repeat/stage/session conditions are skipped on rerun. This includes recorded failures; use a **new `--session`** after fixing a failure if you want to retry it.
+- **Explicit spending:** interactive runs require confirmation; non-interactive real runs require `--yes`. Retries at the HTTP level may still incur provider charges.
+- **No ranking promises:** citation rates depend on question selection, geography/language settings, provider behavior, model versions, and the observation period.
 
-## Documentation
+## Scope and project documentation
 
-- [docs/architecture.md](docs/architecture.md) — packages, data flow, schema
-- [docs/metrics.md](docs/metrics.md) — the exact numerator and denominator of every rate
-- [docs/providers.md](docs/providers.md) — endpoints, citation metadata, retries, what is unverified
-- [docs/cli-reference.md](docs/cli-reference.md) — every command and flag
-- [documents/decisions](documents/decisions/) — the Phase 1 decision record (Japanese)
+Phase 1 is a **CLI-only** tool supporting OpenAI, Gemini, and Anthropic. It does not include a web UI, server, scheduler, or Perplexity adapter.
 
-## Requirements and scope
-
-- Go 1.26 or newer to build; a single static binary to run.
-- CLI only. No web UI, no server, no external database, no scheduled execution.
-- Phase 1 measures OpenAI, Gemini and Anthropic (Claude). Perplexity is out of scope
-  for now.
+- [Architecture](docs/architecture.md) — code structure, data flow, storage
+- [Metric definitions](docs/metrics.md) — exact calculation rules
+- [Provider integrations](docs/providers.md) — response metadata and API caveats
+- [CLI reference](docs/cli-reference.md) — commands, flags, error handling
+- [Configuration example](examples/config.toml) and [questions example](examples/questions.yml)
+- [Contributing](CONTRIBUTING.md) and [Security](SECURITY.md)
+- [Phase 1 decisions (Japanese)](documents/decisions/)
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+Apache License 2.0. See [LICENSE](LICENSE).
