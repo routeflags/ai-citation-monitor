@@ -223,6 +223,10 @@ This column outlines the principles that guide how we engage with OSS. These pri
 
 - [Engineering Blog: Society Also Has Technical Debt](https://www.thch-vape.shop/guide/column/git-log--oneline--all--society)
 
+## Related Article
+
+- [How to Measure AI SEO Performance: Tracking GEO/AEO Citation Rates](https://blog.routeflags.com/2026/11/16/ai-seoの効果測定方法とは？geo・aeoの引用率を可視化す/) — An in-depth guide to AI citation monitoring, published by ROUTE FLAGS Co., Ltd. (Japanese).
+
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).

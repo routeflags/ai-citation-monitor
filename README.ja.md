@@ -222,6 +222,10 @@ This column outlines the principles that guide how we engage with OSS. These pri
 
 - [Engineering Blog: Society Also Has Technical Debt](https://www.thch-vape.shop/guide/column/git-log--oneline--all--society)
 
+## 関連記事
+
+- [AI SEOの効果測定方法とは？GEO・AEOの引用率を可視化する無料OSSを紹介](https://blog.routeflags.com/2026/11/16/ai-seoの効果測定方法とは？geo・aeoの引用率を可視化す/) — 開発・運営会社の株式会社旗指物による解説記事。
+
 ## ライセンス
 
 Apache License 2.0。[LICENSE](LICENSE)を参照してください。
