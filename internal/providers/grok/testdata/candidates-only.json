@@ -1,0 +1,39 @@
+{
+  "created_at": 1781829888,
+  "id": "resp_candidates_only",
+  "model": "grok-test",
+  "object": "response",
+  "output": [
+    {
+      "type": "web_search_call",
+      "id": "ws_candidates",
+      "status": "completed",
+      "action": { "type": "search", "query": "thcv glossary" }
+    },
+    {
+      "type": "message",
+      "id": "msg_candidates",
+      "role": "assistant",
+      "status": "completed",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "An answer that searched but attributed nothing in the text."
+        }
+      ]
+    }
+  ],
+  "citations": [
+    "https://example.shop/guide",
+    "https://rival.example/page"
+  ],
+  "status": "completed",
+  "usage": {
+    "input_tokens": 902,
+    "output_tokens": 51,
+    "total_tokens": 953,
+    "num_sources_used": 2,
+    "num_server_side_tools_used": 1,
+    "server_side_tool_usage_details": { "web_search_calls": 1 }
+  }
+}

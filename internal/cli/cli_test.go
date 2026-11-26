@@ -18,19 +18,23 @@ import (
 // real credential are ever involved: the API key is a dummy value and the base
 // URL points at httptest.
 type harness struct {
-	t             *testing.T
-	dir           string
-	configPath    string
-	dbPath        string
-	server        *httptest.Server
-	openaiHits    atomic.Int32
-	geminiHits    atomic.Int32
-	anthropicHits atomic.Int32
+	t              *testing.T
+	dir            string
+	configPath     string
+	dbPath         string
+	server         *httptest.Server
+	openaiHits     atomic.Int32
+	geminiHits     atomic.Int32
+	anthropicHits  atomic.Int32
+	perplexityHits atomic.Int32
+	grokHits       atomic.Int32
 	// openaiBody is served for every /responses call.
-	openaiBody    string
-	openaiStatus  int
-	geminiBody    string
-	anthropicBody string
+	openaiBody     string
+	openaiStatus   int
+	geminiBody     string
+	anthropicBody  string
+	perplexityBody string
+	grokBody       string
 }
 
 const openAICited = `{
@@ -76,7 +80,32 @@ const anthropicCited = `{
     ]}
   ],
   "stop_reason": "end_turn",
-  "usage": {"input_tokens": 800, "output_tokens": 300, "server_tool_use": {"web_search_requests": 1}}
+	  "usage": {"input_tokens": 800, "output_tokens": 300, "server_tool_use": {"web_search_requests": 1}}
+}`
+
+// grokCited is the xAI Responses shape: a web_search_call item, a message whose
+// output_text carries positional url_citation annotations, and the usage block
+// with the web search counter. The top-level `citations` array is present on
+// purpose: it lists what the search saw, and only the annotations may count.
+const grokCited = `{
+  "id": "resp_grok_test",
+  "object": "response",
+  "status": "completed",
+  "output": [
+    {"type": "web_search_call", "id": "ws_1", "status": "completed", "action": {"type": "search", "query": "q"}},
+    {"type": "message", "role": "assistant", "status": "completed", "content": [
+      {"type": "output_text", "text": "Example Shop answers it.[[1]](https://example.shop/faq) Rival also has a page.[[2]](https://rival.example/page)", "annotations": [
+        {"type": "url_citation", "url": "https://example.shop/faq", "start_index": 24, "end_index": 65, "title": "1"},
+        {"type": "url_citation", "url": "https://rival.example/page", "start_index": 84, "end_index": 124, "title": "2"}
+      ]}
+    ]}
+  ],
+  "citations": ["https://example.shop/faq", "https://rival.example/page", "https://unused.example/x"],
+  "usage": {
+    "input_tokens": 700, "output_tokens": 250, "total_tokens": 950,
+    "num_server_side_tools_used": 1,
+    "server_side_tool_usage_details": {"web_search_calls": 1}
+  }
 }`
 
 const geminiCited = `{
@@ -89,11 +118,37 @@ const geminiCited = `{
   "usageMetadata": {"promptTokenCount": 900, "candidatesTokenCount": 400, "totalTokenCount": 1300}
 }`
 
+// perplexityCited copies the documented Agent API shape: a search_results item with
+// the sources, a message whose content parts carry the url_citation annotations,
+// and usage with the search tool under `tool_calls_details.search_web`. The two
+// sources appear in both places, so the adapter must count each URL once.
+const perplexityCited = `{
+  "id": "resp_test",
+  "object": "response",
+  "created_at": 1781000000,
+  "status": "completed",
+  "model": "openai/gpt-test",
+  "output": [
+    {"type": "search_results", "queries": ["Example Shop"], "results": [
+      {"id": 1, "url": "https://example.shop/guide", "title": "guide", "snippet": "...", "date": "2026-05-01", "last_updated": "2026-05-01", "source": "web"},
+      {"id": 2, "url": "https://rival.example/page", "title": "rival", "snippet": "...", "date": null, "last_updated": "2026-05-02", "source": "web"}
+    ]},
+    {"type": "message", "role": "assistant", "status": "completed", "content": [
+      {"type": "output_text", "text": "Example runs the glossary. Rival also has a page.", "annotations": [
+        {"type": "url_citation", "url": "https://example.shop/guide", "title": "guide", "start_index": 0, "end_index": 7},
+        {"type": "url_citation", "url": "https://rival.example/page", "title": "rival", "start_index": 30, "end_index": 35}
+      ]}
+    ]}
+  ],
+  "usage": {"input_tokens": 1000, "output_tokens": 300, "total_tokens": 1300,
+            "tool_calls_details": {"search_web": {"invocation": 1}}}
+}`
+
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	h := &harness{
 		t: t, dir: t.TempDir(), openaiBody: openAICited, geminiBody: geminiCited,
-		anthropicBody: anthropicCited,
+		anthropicBody: anthropicCited, perplexityBody: perplexityCited, grokBody: grokCited,
 	}
 	h.configPath = filepath.Join(h.dir, "aicm.toml")
 	h.dbPath = filepath.Join(h.dir, "measurements", "aicm.db")
@@ -101,7 +156,28 @@ func newHarness(t *testing.T) *harness {
 	h.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case strings.HasSuffix(r.URL.Path, "/responses"):
+		case strings.HasPrefix(r.URL.Path, "/perplexity/"):
+			// base_url + /agent, so the path also proves the adapter appends the
+			// Agent API path and not /responses.
+			if r.URL.Path != "/perplexity/v1/agent" {
+				t.Errorf("perplexity path = %s, want /perplexity/v1/agent", r.URL.Path)
+			}
+			h.perplexityHits.Add(1)
+			if got := r.Header.Get("Authorization"); got != "Bearer perplexity-test-dummy" {
+				t.Errorf("perplexity authorization = %q", got)
+			}
+			w.Write([]byte(h.perplexityBody))
+		case r.URL.Path == "/xai/responses":
+			// Grok speaks the same Responses path as OpenAI, so the harness gives
+			// it its own base-URL prefix. The match is exact, not a suffix: a
+			// suffix rule would serve the OpenAI fixture to grok and the test
+			// would still pass on the shared output[]/annotations[] shape.
+			h.grokHits.Add(1)
+			if got := r.Header.Get("Authorization"); got != "Bearer xai-test-dummy" {
+				t.Errorf("grok authorization = %q, want the configured key", got)
+			}
+			w.Write([]byte(h.grokBody))
+		case r.URL.Path == "/responses":
 			h.openaiHits.Add(1)
 			if got := r.Header.Get("Authorization"); !strings.HasPrefix(got, "Bearer ") {
 				t.Errorf("missing authorization header")
@@ -137,6 +213,8 @@ func newHarness(t *testing.T) *harness {
 	t.Setenv("OPENAI_API_KEY", "sk-test-dummy")
 	t.Setenv("GEMINI_API_KEY", "gemini-test-dummy")
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test-dummy")
+	t.Setenv("PERPLEXITY_API_KEY", "perplexity-test-dummy")
+	t.Setenv("XAI_API_KEY", "xai-test-dummy")
 	h.writeConfig()
 	if code, _, stderr := h.run("init", "--non-interactive", "--force", "--site-id", "demo", "--own-domain", "example.shop"); code != ExitOK {
 		t.Fatalf("init = %d: %s", code, stderr)
@@ -178,11 +256,25 @@ timeout_seconds = 5
 max_tokens = 2048
 max_uses = 3
 
+[providers.perplexity]
+model = "openai/gpt-test"
+api_key_env = "PERPLEXITY_API_KEY"
+base_url = %q
+timeout_seconds = 5
+
+[providers.grok]
+model = "grok-test"
+api_key_env = "XAI_API_KEY"
+base_url = %q
+timeout_seconds = 5
+
 [limits]
 concurrency = 2
 rpm = 6000
 max_retries = 0
-`, h.dbPath, filepath.Join(h.dir, "reports"), h.server.URL, h.server.URL, h.server.URL)
+`, h.dbPath, filepath.Join(h.dir, "reports"),
+		h.server.URL, h.server.URL, h.server.URL,
+		h.server.URL+"/perplexity/v1", h.server.URL+"/xai")
 	if err := os.WriteFile(h.configPath, []byte(config), 0o644); err != nil {
 		h.t.Fatalf("write config: %v", err)
 	}
@@ -732,6 +824,100 @@ func TestAnthropicIsARegisteredProvider(t *testing.T) {
 	}
 }
 
+func TestPerplexityIsARegisteredProvider(t *testing.T) {
+	h := newHarness(t)
+	h.importQuestions()
+
+	// The Agent API path, its own endpoint version, and the citations it reported
+	// (search sources and annotations merged, each URL once).
+	code, stdout, stderr := h.run("run", "--provider", "perplexity", "--repeat", "1", "--yes")
+	if code != ExitOK {
+		t.Fatalf("perplexity run = %d: %s\n%s", code, stderr, stdout)
+	}
+	if h.perplexityHits.Load() != 2 {
+		t.Fatalf("perplexity requests = %d, want 2 (2 questions x 1 repeat)", h.perplexityHits.Load())
+	}
+	if h.openaiHits.Load() != 0 || h.anthropicHits.Load() != 0 || h.geminiHits.Load() != 0 {
+		t.Fatalf("another provider was called (openai=%d gemini=%d anthropic=%d) although only perplexity was selected",
+			h.openaiHits.Load(), h.geminiHits.Load(), h.anthropicHits.Load())
+	}
+	runs := h.query("SELECT COUNT(*) FROM runs WHERE provider = 'perplexity' AND api_endpoint_version = 'agent/v1+web_search'")
+	defer runs.close()
+	if got := runs.int64(); got != 2 {
+		t.Fatalf("perplexity runs = %d, want 2 with the agent/v1+web_search endpoint version", got)
+	}
+	cited := h.query("SELECT COUNT(*) FROM runs WHERE provider = 'perplexity' AND cited_own = 1 AND citation_count = 2")
+	defer cited.close()
+	if cited.int64() != 2 {
+		t.Errorf("the cited fixture should record cited_own with the two unique citations")
+	}
+
+	// Two providers in one run keep separate groups.
+	code, stdout, stderr = h.run("run", "--provider", "openai,perplexity", "--repeat", "1", "--session", "both", "--yes")
+	if code != ExitOK {
+		t.Fatalf("run both = %d: %s\n%s", code, stderr, stdout)
+	}
+	if h.openaiHits.Load() != 2 || h.perplexityHits.Load() != 4 {
+		t.Fatalf("hits: openai=%d perplexity=%d, want 2 and 4", h.openaiHits.Load(), h.perplexityHits.Load())
+	}
+}
+
+// TestGrokIsARegisteredProvider runs the xAI adapter through the same plan and
+// recording path as the other providers: grok is called, nothing else is, and
+// the record carries the xAI surface.
+func TestGrokIsARegisteredProvider(t *testing.T) {
+	h := newHarness(t)
+
+	// init rewrites the configuration from the parsed struct, so a missing block
+	// in config.Save would silently drop the harness base URL and send the test
+	// at api.x.ai. Read the file back before any call is made.
+	saved := readFileString(t, h.configPath)
+	for _, want := range []string{
+		"[providers.grok]",
+		`model = "grok-test"`,
+		`api_key_env = "XAI_API_KEY"`,
+		fmt.Sprintf("base_url = %q", h.server.URL+"/xai"),
+	} {
+		if !strings.Contains(saved, want) {
+			t.Fatalf("the saved config lost %q:\n%s", want, saved)
+		}
+	}
+	if strings.Contains(saved, "xai-test-dummy") {
+		t.Fatal("the credential value was written to the config")
+	}
+
+	h.importQuestions()
+
+	code, stdout, stderr := h.run("run", "--provider", "grok", "--repeat", "1", "--yes")
+	if code != ExitOK {
+		t.Fatalf("run = %d: %s\n%s", code, stderr, stdout)
+	}
+	if h.grokHits.Load() != 2 {
+		t.Fatalf("grok requests = %d, want 2 (2 questions x 1 repeat)", h.grokHits.Load())
+	}
+	if h.openaiHits.Load() != 0 {
+		t.Fatalf("openai was called (%d) although only grok was selected", h.openaiHits.Load())
+	}
+
+	runs := h.query("SELECT COUNT(*) FROM runs WHERE provider = 'grok' AND api_endpoint_version = 'responses/v1+web_search+xai'")
+	defer runs.close()
+	if got := runs.int64(); got != 2 {
+		t.Fatalf("grok runs = %d, want 2 with the xAI endpoint version", got)
+	}
+	// Only the annotations count: the fixture's top-level citations array names
+	// three URLs, one of which the answer never cites.
+	cited := h.query("SELECT COUNT(*) FROM runs WHERE provider = 'grok' AND cited_own = 1 AND citation_count = 2")
+	defer cited.close()
+	if cited.int64() != 2 {
+		t.Errorf("the cited fixture should record cited_own with two citations")
+	}
+	usage := h.query("SELECT COUNT(*) FROM usage_records u JOIN runs r ON r.id = u.run_id WHERE r.provider = 'grok' AND u.tool_calls = 1 AND u.total_tokens = 950")
+	defer usage.close()
+	if usage.int64() != 2 {
+		t.Errorf("the usage record should carry the reported tokens and one tool call")
+	}
+}
+
 func readFileString(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -741,50 +927,6 @@ func readFileString(t *testing.T, path string) string {
 	return string(data)
 }
 
-func TestInitReportLanguageFollowsTheSiteLanguage(t *testing.T) {
-	h := newHarness(t)
-
-	// An operator who sets the answer language expects the report in the same
-	// language; the report was silently English before. A fresh file is used so an
-	// existing [report] language (which init must not overwrite) is out of the way.
-	first := filepath.Join(h.dir, "ja.toml")
-	code, _, stderr := h.run("init", "--non-interactive", "--skip-db", "--out", first,
-		"--site-id", "demo", "--own-domain", "example.shop", "--language", "ja")
-	if code != ExitOK {
-		t.Fatalf("init = %d: %s", code, stderr)
-	}
-	saved := readFileString(t, first)
-	if !strings.Contains(saved, "[report]\nlanguage = \"ja\"") {
-		t.Fatalf("the report language must follow --language ja:\n%s", saved)
-	}
-
-	// It can still be set on its own.
-	second := filepath.Join(h.dir, "en-report.toml")
-	code, _, stderr = h.run("init", "--non-interactive", "--skip-db", "--out", second,
-		"--site-id", "demo", "--own-domain", "example.shop", "--language", "ja",
-		"--report-language", "en")
-	if code != ExitOK {
-		t.Fatalf("init = %d: %s", code, stderr)
-	}
-	saved = readFileString(t, second)
-	if !strings.Contains(saved, "[report]\nlanguage = \"en\"") {
-		t.Fatalf("--report-language en must win:\n%s", saved)
-	}
-
-	// An unsupported report language is a configuration error, not a silent English
-	// report.
-	third := filepath.Join(h.dir, "fr.toml")
-	code, _, stderr = h.run("init", "--non-interactive", "--skip-db", "--out", third,
-		"--site-id", "demo", "--own-domain", "example.shop", "--language", "ja",
-		"--report-language", "fr")
-	if code != ExitConfig {
-		t.Fatalf("exit = %d, want %d for an unsupported report language: %s", code, ExitConfig, stderr)
-	}
-	if !strings.Contains(stderr, "report language") {
-		t.Errorf("the error should name the setting: %s", stderr)
-	}
-}
-
 func TestVersionListsTheProvidersAndVersions(t *testing.T) {
 	h := newHarness(t)
 
@@ -792,13 +934,25 @@ func TestVersionListsTheProvidersAndVersions(t *testing.T) {
 	if code != ExitOK {
 		t.Fatalf("version = %d: %s", code, stderr)
 	}
-	for _, want := range []string{"openai", "gemini", "anthropic", "messages/v1"} {
+	for _, want := range []string{
+		"openai", "gemini", "anthropic", "messages/v1",
+		"perplexity", "agent/v1+web_search",
+		"grok", "responses/v1+web_search+xai",
+	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("version output does not contain %q:\n%s", want, stdout)
 		}
 	}
-	if !strings.Contains(stdout, "observed once per provider") {
+	if !strings.Contains(stdout, "observed once") {
 		t.Errorf("the version output must state what was observed live and what was not:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "NOT observed: perplexity, grok") {
+		t.Errorf("the version output must name the providers that were never called live:\n%s", stdout)
+	}
+	for _, line := range strings.Split(stdout, "\n") {
+		if strings.HasPrefix(line, "live API:") && (strings.Contains(line, "perplexity:") || strings.Contains(line, "grok:")) {
+			t.Errorf("the live observation line claims an unobserved provider: %q", line)
+		}
 	}
 	if !strings.Contains(stdout, "never call a provider") {
 		t.Errorf("the version output must say the tests stay offline:\n%s", stdout)

@@ -1,0 +1,18 @@
+{
+  "id": "resp_pplx_no_metadata",
+  "object": "response",
+  "created_at": 1781000000,
+  "status": "completed",
+  "model": "openai/gpt-test",
+  "output": [
+    {
+      "type": "message",
+      "role": "assistant",
+      "status": "completed",
+      "content": [
+        {"type": "output_text", "text": "検索せずに答えた回答です。"}
+      ]
+    }
+  ],
+  "usage": {"input_tokens": 200, "output_tokens": 40, "total_tokens": 240}
+}

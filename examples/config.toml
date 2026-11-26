@@ -56,6 +56,20 @@ max_tokens = 8192
 # Searches one call may run (server-side tool limit).
 max_uses = 5
 
+[providers.perplexity]
+# Agent API + the server-side web_search tool. The tool records this API surface
+# (`agent/v1+web_search`); the model name may be a model hosted elsewhere.
+model = ""
+api_key_env = "PERPLEXITY_API_KEY"
+base_url = "https://api.perplexity.ai/v1"
+timeout_seconds = 90
+
+[providers.grok]
+# xAI Responses API + the web_search tool (no dated tool version).
+model = ""
+api_key_env = "XAI_API_KEY"
+base_url = "https://api.x.ai/v1"
+timeout_seconds = 90
 [limits]
 concurrency = 2
 rpm = 20

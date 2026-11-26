@@ -193,6 +193,8 @@ aicm verify
 | OpenAI | Responses API + `web_search` | **2026-11-15** に1モデル・1質問で実API観測。オフラインのfixtureテストあり |
 | Google Gemini | `generateContent` + `google_search` | **2026-11-15** に1モデル・1質問で実API観測。オフラインのfixtureテストあり |
 | Anthropic Claude | Messages API + `web_search_20250305` | **2026-11-15** に1モデル・1質問で実API観測。オフラインのfixtureテストあり |
+| Perplexity | Agent API + `web_search` | **実装済み・実APIは未観測**：オフラインのfixtureテストのみ |
+| xAI Grok | Responses API + `web_search` | **実API未検証**。実装済み・オフラインのfixtureテストのみ |
 
 上記の実API確認は**特定条件での単発観測**であり、あらゆるモデルの動作や本番計測の完了を意味しません。全質問セットでの実API計測は未実施です。引用抽出、リトライ、レート制限、並列実行、中断・再開についてもテストがあります。詳細は[プロバイダー仕様](docs/providers.md)を参照してください。
 
@@ -206,7 +208,7 @@ aicm verify
 
 ## スコープとドキュメント
 
-Phase 1 は **CLI専用**で、OpenAI・Gemini・Anthropicに対応します。Web UI、サーバー、スケジューラー、Perplexityアダプターは対象外です。
+Phase 1 は **CLI専用**で、OpenAI・Gemini・Anthropic・Perplexity・Grokに対応します。Web UI、サーバー、スケジューラーは対象外です。
 
 - [アーキテクチャ](docs/architecture.md) — コード構造・データフロー・保存方法
 - [指標定義](docs/metrics.md) — 各指標の正確な分子と分母

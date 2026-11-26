@@ -16,8 +16,10 @@ import (
 	"github.com/routeflags/ai-citation-monitor/internal/providers"
 	"github.com/routeflags/ai-citation-monitor/internal/providers/anthropic"
 	"github.com/routeflags/ai-citation-monitor/internal/providers/gemini"
+	"github.com/routeflags/ai-citation-monitor/internal/providers/grok"
 	"github.com/routeflags/ai-citation-monitor/internal/providers/httpclient"
 	"github.com/routeflags/ai-citation-monitor/internal/providers/openai"
+	"github.com/routeflags/ai-citation-monitor/internal/providers/perplexity"
 	"github.com/routeflags/ai-citation-monitor/internal/runner"
 )
 
@@ -345,6 +347,16 @@ func (a *App) buildProviders(cfg *config.Config, targets []runner.Target, rpm in
 			result["anthropic"] = anthropic.New(anthropic.Options{
 				APIKey: apiKey, BaseURL: providerCfg.BaseURL, HTTP: client, Secrets: secrets,
 				MaxTokens: cfg.Providers.Anthropic.MaxTokens, MaxUses: cfg.Providers.Anthropic.MaxUses,
+				Now: now,
+			})
+		case "perplexity":
+			result["perplexity"] = perplexity.New(perplexity.Options{
+				APIKey: apiKey, BaseURL: providerCfg.BaseURL, HTTP: client, Secrets: secrets,
+				Now: now,
+			})
+		case "grok":
+			result["grok"] = grok.New(grok.Options{
+				APIKey: apiKey, BaseURL: providerCfg.BaseURL, HTTP: client, Secrets: secrets,
 				Now: now,
 			})
 		}

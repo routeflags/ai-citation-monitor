@@ -194,6 +194,8 @@ Global `--json` mode keeps stdout machine-readable and sends diagnostics to stde
 | OpenAI | Responses API + `web_search` | One live single-question observation on **2026-11-15**; offline fixture tests |
 | Google Gemini | `generateContent` + `google_search` | One live single-question observation on **2026-11-15**; offline fixture tests |
 | Anthropic Claude | Messages API + `web_search_20250305` | One live single-question observation on **2026-11-15**; offline fixture tests |
+| Perplexity | Agent API + `web_search` | **Implemented, no live call yet**: offline fixture tests only |
+| xAI Grok | Responses API + `web_search` | **Not verified against the live API**: implemented, offline fixture tests only |
 
 These observations verify specific response shapes, **not universal model support or a completed production measurement**. A full live question-set study has not been performed. Tests also cover citation extraction, retry behavior, rate limits, concurrent calls, and interruption/resume behavior. See [provider details](docs/providers.md).
 
@@ -207,7 +209,8 @@ These observations verify specific response shapes, **not universal model suppor
 
 ## Scope and project documentation
 
-Phase 1 is a **CLI-only** tool supporting OpenAI, Gemini, and Anthropic. It does not include a web UI, server, scheduler, or Perplexity adapter.
+Phase 1 is a **CLI-only** tool supporting OpenAI, Gemini, Anthropic,
+Perplexity, and Grok. It does not include a web UI, server, or scheduler.
 
 - [Architecture](docs/architecture.md) — code structure, data flow, storage
 - [Metric definitions](docs/metrics.md) — exact calculation rules

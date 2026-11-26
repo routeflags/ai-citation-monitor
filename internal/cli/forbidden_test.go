@@ -115,7 +115,7 @@ func TestHTTPLayerIsUsedForTheProviders(t *testing.T) {
 			found[filepath.Base(filepath.Dir(path))] = true
 		}
 	})
-	for _, want := range []string{"httpclient", "openai", "gemini", "anthropic"} {
+	for _, want := range []string{"httpclient", "openai", "gemini", "anthropic", "perplexity", "grok"} {
 		if !found[want] {
 			t.Errorf("package %s does not use net/http; the adapters are supposed to speak HTTP", want)
 		}

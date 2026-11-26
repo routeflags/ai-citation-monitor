@@ -80,7 +80,8 @@ type Result struct {
 
 // Provider is one AI service adapter.
 type Provider interface {
-	// Name is the provider id written into every run row (openai / gemini).
+	// Name is the provider id written into every run row
+	// (openai / gemini / anthropic / perplexity / grok).
 	Name() string
 	// EndpointVersion names the API surface this adapter speaks, so a future
 	// change of surface does not silently mix measurements.

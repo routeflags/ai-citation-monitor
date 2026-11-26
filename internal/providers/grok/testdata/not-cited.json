@@ -1,0 +1,36 @@
+{
+  "created_at": 1781829888,
+  "id": "resp_not_cited",
+  "model": "grok-test",
+  "object": "response",
+  "output": [
+    {
+      "type": "web_search_call",
+      "id": "ws_not_cited",
+      "status": "completed",
+      "action": { "type": "search", "query": "thcv" }
+    },
+    {
+      "type": "message",
+      "id": "msg_not_cited",
+      "role": "assistant",
+      "status": "completed",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "The answer needed no source after all.",
+          "annotations": []
+        }
+      ]
+    }
+  ],
+  "status": "completed",
+  "usage": {
+    "input_tokens": 410,
+    "output_tokens": 42,
+    "total_tokens": 452,
+    "num_sources_used": 3,
+    "num_server_side_tools_used": 1,
+    "server_side_tool_usage_details": { "web_search_calls": 1 }
+  }
+}

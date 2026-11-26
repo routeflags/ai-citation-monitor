@@ -55,9 +55,11 @@ type AnthropicConfig struct {
 
 // Providers groups the adapters this build knows about.
 type Providers struct {
-	OpenAI    ProviderConfig  `toml:"openai"`
-	Gemini    ProviderConfig  `toml:"gemini"`
-	Anthropic AnthropicConfig `toml:"anthropic"`
+	OpenAI     ProviderConfig  `toml:"openai"`
+	Gemini     ProviderConfig  `toml:"gemini"`
+	Anthropic  AnthropicConfig `toml:"anthropic"`
+	Perplexity ProviderConfig  `toml:"perplexity"`
+	Grok       ProviderConfig  `toml:"grok"`
 }
 
 // Limits bounds concurrency, request rate and retries.
@@ -111,13 +113,16 @@ func (c *Config) HasSubdomains() bool {
 	return *c.Subdomains
 }
 
-// Provider returns the block for a provider name (openai / gemini / anthropic).
+// Provider returns the block for a provider name
+// (openai / gemini / anthropic / perplexity / grok).
 func (c *Config) Provider(name string) (ProviderConfig, bool) {
 	switch name {
 	case "openai":
 		return c.Providers.OpenAI, true
 	case "gemini":
 		return c.Providers.Gemini, true
+	case "grok":
+		return c.Providers.Grok, true
 	case "anthropic":
 		// The shared view of the block; the two Claude-only numbers stay available
 		// through c.Providers.Anthropic.
@@ -127,13 +132,20 @@ func (c *Config) Provider(name string) (ProviderConfig, bool) {
 			BaseURL:        c.Providers.Anthropic.BaseURL,
 			TimeoutSeconds: c.Providers.Anthropic.TimeoutSeconds,
 		}, true
+	case "perplexity":
+		return c.Providers.Perplexity, true
 	default:
 		return ProviderConfig{}, false
 	}
 }
 
-// ProviderNames lists the providers this build supports, in a stable order.
-func ProviderNames() []string { return []string{"openai", "gemini", "anthropic"} }
+// ProviderNames lists the providers this build supports, in a stable order. A new
+// provider is appended: the order is part of what an operator sees in `aicm
+// version`, the help text and the error messages, and re-ordering old entries
+// would make previously printed lists and records look different.
+func ProviderNames() []string {
+	return []string{"openai", "gemini", "anthropic", "perplexity", "grok"}
+}
 
 // Load reads the configuration. A missing file is not an error: it returns the
 // defaults (with Path empty) and a warning so callers can print an actionable
@@ -228,6 +240,28 @@ func (c *Config) ApplyDefaults() {
 	if c.Providers.Anthropic.MaxUses <= 0 {
 		c.Providers.Anthropic.MaxUses = anthropic.DefaultMaxUses
 	}
+	if c.Providers.Perplexity.APIKeyEnv == "" {
+		c.Providers.Perplexity.APIKeyEnv = "PERPLEXITY_API_KEY"
+	}
+	if c.Providers.Perplexity.BaseURL == "" {
+		// The Agent API is the surface this build speaks (`/agent` is appended by the
+		// adapter); `/v1/responses` is only an OpenAI-compatible alias.
+		c.Providers.Perplexity.BaseURL = "https://api.perplexity.ai/v1"
+	}
+	if c.Providers.Perplexity.TimeoutSeconds <= 0 {
+		c.Providers.Perplexity.TimeoutSeconds = DefaultTimeoutSecond
+	}
+	if c.Providers.Grok.APIKeyEnv == "" {
+		c.Providers.Grok.APIKeyEnv = "XAI_API_KEY"
+	}
+	if c.Providers.Grok.BaseURL == "" {
+		c.Providers.Grok.BaseURL = "https://api.x.ai/v1"
+	}
+	if c.Providers.Grok.TimeoutSeconds <= 0 {
+		c.Providers.Grok.TimeoutSeconds = DefaultTimeoutSecond
+	}
+	// The model name is never defaulted: a guessed model is a measurement of
+	// something the operator did not choose (see docs/providers.md).
 }
 
 // Problems lists what prevents a measurement from running. Each entry names the
@@ -372,6 +406,19 @@ func Save(path string, cfg *Config) error {
 	fmt.Fprintf(&b, "max_tokens = %d  # required; a cut-off answer is an error\n", cfg.Providers.Anthropic.MaxTokens)
 	fmt.Fprintf(&b, "max_uses = %d  # searches one call may run\n\n", cfg.Providers.Anthropic.MaxUses)
 
+	b.WriteString("[providers.perplexity]\n")
+	b.WriteString("# Agent API + the server-side web_search tool.\n")
+	fmt.Fprintf(&b, "model = %q\n", cfg.Providers.Perplexity.Model)
+	fmt.Fprintf(&b, "api_key_env = %q\n", cfg.Providers.Perplexity.APIKeyEnv)
+	fmt.Fprintf(&b, "base_url = %q\n", cfg.Providers.Perplexity.BaseURL)
+	fmt.Fprintf(&b, "timeout_seconds = %d\n\n", cfg.Providers.Perplexity.TimeoutSeconds)
+
+	b.WriteString("[providers.grok]\n")
+	b.WriteString("# xAI Responses API + the server-side web_search tool.\n")
+	fmt.Fprintf(&b, "model = %q\n", cfg.Providers.Grok.Model)
+	fmt.Fprintf(&b, "api_key_env = %q\n", cfg.Providers.Grok.APIKeyEnv)
+	fmt.Fprintf(&b, "base_url = %q\n", cfg.Providers.Grok.BaseURL)
+	fmt.Fprintf(&b, "timeout_seconds = %d\n\n", cfg.Providers.Grok.TimeoutSeconds)
 	b.WriteString("[limits]\n")
 	fmt.Fprintf(&b, "concurrency = %d\n", cfg.Limits.Concurrency)
 	fmt.Fprintf(&b, "rpm = %d\n", cfg.Limits.RPM)

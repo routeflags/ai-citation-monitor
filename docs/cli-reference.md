@@ -79,7 +79,7 @@ aicm questions import --file questions.yml|questions.csv [--stage smoke] [--chec
 ## run
 
 ```
-aicm run [--provider openai|gemini|anthropic|openai,anthropic,...] [--source ...] [--model M]
+aicm run [--provider openai|gemini|anthropic|perplexity|grok|openai,anthropic,...] [--source ...] [--model M]
          [--repeat N] [--stage smoke|initial|regular] [--concurrency N] [--rpm N]
          [--limit N] [--session S] [--store full|hash-only] [--dry-run] [--yes]
 ```
@@ -214,5 +214,15 @@ aicm version [--json]
 ```
 
 Prints the build, the normaliser version, the supported providers (`openai`,
-`gemini`, `anthropic`) and their endpoint versions, and states that the live API is
-not verified.
+`gemini`, `anthropic`, `perplexity`, `grok`) and their endpoint versions, and
+says which providers were observed against the live API and which were not:
+
+```
+providers: openai (responses/v1+web_search), gemini (generateContent/v1beta+google_search), anthropic (messages/v1+web_search_20250305+api_2026-10-21), perplexity (agent/v1+web_search), grok (responses/v1+web_search+xai)
+live API: observed once: openai: gpt-6.1-sol, 2026-11-15; gemini: gemini-3.1-pro-preview, 2026-11-15; anthropic: claude-sonnet-5-5, 2026-11-15 — implemented but NOT observed: perplexity, grok
+tests:    never call a provider; CI uses fixtures and httptest only
+```
+
+`--json` adds `live_observations` (the providers actually observed once, with the
+model and date) and `live_not_observed` (the adapters this build speaks but has
+never called against the real service).

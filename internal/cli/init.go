@@ -13,6 +13,8 @@ import (
 	"github.com/routeflags/ai-citation-monitor/internal/domain"
 	"github.com/routeflags/ai-citation-monitor/internal/providers"
 	"github.com/routeflags/ai-citation-monitor/internal/providers/anthropic"
+	"github.com/routeflags/ai-citation-monitor/internal/providers/grok"
+	"github.com/routeflags/ai-citation-monitor/internal/providers/perplexity"
 	"github.com/routeflags/ai-citation-monitor/internal/runner"
 	"github.com/routeflags/ai-citation-monitor/internal/storage/sqlite"
 )
@@ -251,26 +253,77 @@ func (a *App) versionCommand() *cobra.Command {
 				"tool_version": runner.ToolVersion(),
 				"normalizer":   domain.NormalizerVersion,
 				"providers":    config.ProviderNames(),
-				"endpoints": map[string]string{
-					"openai":    "responses/v1+web_search",
-					"gemini":    "generateContent/v1beta+google_search",
-					"anthropic": anthropic.EndpointVersion,
-				},
-				"measurement":       "official_api",
+				"endpoints":    endpointVersions(),
+				"measurement":  "official_api",
+				// Some adapters have never been called against the real service. The
+				// lists below say which ones, so "this build speaks the API" is never
+				// read as "this build has observed the API".
 				"live_api_tested":   false, // no test calls a provider
 				"live_observations": providers.LiveObservation,
+				"live_not_observed": unobservedProviders(),
 			}
 			if a.JSON {
 				return a.PrintJSON(info)
 			}
 			fmt.Fprintf(a.Out, "aicm %s (tool_version %s)\n", runner.Build, runner.ToolVersion())
-			fmt.Fprintf(a.Out, "providers: openai (responses/v1+web_search), gemini (generateContent/v1beta+google_search), anthropic (%s)\n",
-				anthropic.EndpointVersion)
-			fmt.Fprintf(a.Out, "live API: observed once per provider (%s)\n", summarizeLiveObservations())
+			fmt.Fprintf(a.Out, "providers: %s\n", describeEndpoints())
+			fmt.Fprintf(a.Out, "live API: %s\n", liveAPIStatus())
 			fmt.Fprintf(a.Out, "tests:    never call a provider; CI uses fixtures and httptest only\n")
 			return nil
 		},
 	}
+}
+
+// endpointVersions is the surface each adapter speaks, in the provider order.
+func endpointVersions() map[string]string {
+	return map[string]string{
+		"openai":     "responses/v1+web_search",
+		"gemini":     "generateContent/v1beta+google_search",
+		"anthropic":  anthropic.EndpointVersion,
+		"perplexity": perplexity.EndpointVersion,
+		"grok":       grok.EndpointVersion,
+	}
+}
+
+// describeEndpoints renders the providers inline, so a one-line human output does
+// not need a hand-written sentence per provider.
+func describeEndpoints() string {
+	names := config.ProviderNames()
+	endpoints := endpointVersions()
+	parts := make([]string, 0, len(names))
+	for _, name := range names {
+		parts = append(parts, fmt.Sprintf("%s (%s)", name, endpoints[name]))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// unobservedProviders lists the providers this build supports but has never called
+// against the real service (no entry in providers.LiveObservation).
+func unobservedProviders() []string {
+	missing := make([]string, 0, len(config.ProviderNames()))
+	for _, name := range config.ProviderNames() {
+		if providers.LiveObservation[name] == "" {
+			missing = append(missing, name)
+		}
+	}
+	return missing
+}
+
+// liveAPIStatus says which providers were observed once and which were not. One
+// observed model is not a supported-model list, and an adapter that has never been
+// called must not read as observed.
+func liveAPIStatus() string {
+	observed := summarizeLiveObservations()
+	missing := unobservedProviders()
+	if len(missing) == 0 {
+		return fmt.Sprintf("observed once per provider (%s)", observed)
+	}
+	if observed == "no live call from this build" {
+		return fmt.Sprintf("no live call from this build; implemented but not observed: %s",
+			strings.Join(missing, ", "))
+	}
+	return fmt.Sprintf("observed once: %s — implemented but NOT observed: %s",
+		observed, strings.Join(missing, ", "))
 }
 
 // summarizeLiveObservations renders a stable one-line summary, so the command does

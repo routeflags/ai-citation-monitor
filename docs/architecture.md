@@ -13,6 +13,8 @@ internal/providers  provider interface + Result
   internal/providers/openai       Responses API + web_search
   internal/providers/gemini       generateContent + google_search
   internal/providers/anthropic    Messages API + web_search_20250305 (server tool)
+  internal/providers/perplexity   Agent API + web_search (server tool)
+  internal/providers/grok         xAI Responses API + web_search
 internal/domain     URL normalisation, own-domain match, brand mention match
 internal/storage/sqlite  migrations, append-only writes, reads, integrity checks
 internal/analysis   the only definition of every rate (groups, coverage, share, trends)

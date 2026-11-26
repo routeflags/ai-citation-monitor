@@ -1,0 +1,62 @@
+{
+  "created_at": 1781829888,
+  "completed_at": 1781829889,
+  "id": "5808284d-ae14-9981-9289-73515f67ebda",
+  "model": "grok-test",
+  "object": "response",
+  "output": [
+    {
+      "type": "web_search_call",
+      "id": "ws_5808284d",
+      "status": "completed",
+      "action": { "type": "search", "query": "thcv glossary" }
+    },
+    {
+      "type": "message",
+      "id": "msg_5808284d",
+      "role": "assistant",
+      "status": "completed",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Example Shop explains THCV.[[1]](https://example.shop/guide) Rival also has a page.[[2]](https://rival.example/page)",
+          "logprobs": [],
+          "annotations": [
+            {
+              "type": "url_citation",
+              "url": "https://example.shop/guide",
+              "start_index": 29,
+              "end_index": 70,
+              "title": "1"
+            },
+            {
+              "type": "url_citation",
+              "url": "https://rival.example/page",
+              "start_index": 89,
+              "end_index": 129,
+              "title": "2"
+            },
+            {
+              "type": "url_citation",
+              "url": "https://example.shop/guide?utm_source=x#top",
+              "start_index": 130,
+              "end_index": 180,
+              "title": "3"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "status": "completed",
+  "usage": {
+    "input_tokens": 1204,
+    "input_tokens_details": { "cached_tokens": 0 },
+    "output_tokens": 268,
+    "output_tokens_details": { "reasoning_tokens": 64 },
+    "total_tokens": 1472,
+    "num_sources_used": 2,
+    "num_server_side_tools_used": 1,
+    "server_side_tool_usage_details": { "web_search_calls": 1 }
+  }
+}

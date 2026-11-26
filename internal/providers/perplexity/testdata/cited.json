@@ -1,0 +1,35 @@
+{
+  "id": "resp_pplx_cited",
+  "object": "response",
+  "created_at": 1781000000,
+  "status": "completed",
+  "model": "openai/gpt-test",
+  "output": [
+    {
+      "type": "search_results",
+      "queries": ["Example Shop 用語集"],
+      "results": [
+        {"id": 1, "url": "https://example.shop/glossary", "title": "用語集", "snippet": "...", "date": "2026-05-01", "last_updated": "2026-05-02", "source": "web"},
+        {"id": 2, "url": "https://rival.example/page", "title": "rival", "snippet": "...", "date": null, "last_updated": "2026-05-02", "source": "web"}
+      ]
+    },
+    {
+      "type": "message",
+      "role": "assistant",
+      "status": "completed",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Example Shop の用語集が説明しています。競合も載せています。",
+          "annotations": [
+            {"type": "url_citation", "url": "https://example.shop/glossary", "title": "用語集", "start_index": 0, "end_index": 12},
+            {"type": "url_citation", "url": "https://rival.example/page", "title": "rival", "start_index": 30, "end_index": 40},
+            {"type": "url_citation", "url": "https://example.shop/glossary", "title": "用語集（重複）", "start_index": 50, "end_index": 60},
+            {"type": "url_citation", "url": "https://example.shop/glossary#top", "title": "用語集（先頭）", "start_index": 61, "end_index": 70}
+          ]
+        }
+      ]
+    }
+  ],
+  "usage": {"input_tokens": 1200, "output_tokens": 300, "total_tokens": 1500, "tool_calls_details": {"search_web": {"invocation": 1}}}
+}
