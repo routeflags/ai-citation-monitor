@@ -43,7 +43,7 @@ AI Citation Monitor は、**GEO（Generative Engine Optimization）**と**AEO（
 実行する前に、公開された checksum と照合してください。
 
 ```bash
-VERSION=0.1.2                                       # ダウンロードしたリリース
+VERSION=0.2.0                                       # ダウンロードしたリリース
 ARCHIVE=ai-citation-monitor_${VERSION}_darwin_arm64.tar.gz   # 自分の環境に合わせる
 
 grep "$ARCHIVE" checksums.txt | shasum -a 256 -c -  # Linux は ... | sha256sum -c -
@@ -52,7 +52,7 @@ mkdir -p ~/.local/bin && install -m 0755 aicm ~/.local/bin/aicm   # または: s
 aicm version
 ```
 
-アーカイブはディレクトリを作らず、`aicm`・`LICENSE`・README・`docs/`・`examples/` を展開します。Windows では `(Get-FileHash .\ai-citation-monitor_0.1.2_windows_amd64.zip -Algorithm SHA256).Hash` を `checksums.txt` の値と照合し、`.zip` を展開してフォルダを `PATH` に追加してください。
+アーカイブはディレクトリを作らず、`aicm`・`LICENSE`・README・`docs/`・`examples/` を展開します。Windows では `(Get-FileHash .\ai-citation-monitor_0.2.0_windows_amd64.zip -Algorithm SHA256).Hash` を `checksums.txt` の値と照合し、`.zip` を展開してフォルダを `PATH` に追加してください。
 
 ### Go で入れる
 
@@ -216,6 +216,7 @@ Phase 1 は **CLI専用**で、OpenAI・Gemini・Anthropic・Perplexity・Grok�
 - [CLIリファレンス](docs/cli-reference.md) — コマンド・フラグ・エラー処理
 - [設定例](examples/config.toml)と[質問例](examples/questions.yml)
 - [コントリビューション](CONTRIBUTING.md)と[セキュリティ](SECURITY.md)
+- [変更履歴](CHANGELOG.md) — リリースノート
 - [Phase 1 決定記録](documents/decisions/)
 
 ## Philosophy
