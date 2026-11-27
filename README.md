@@ -76,6 +76,12 @@ make check    # gofmt, vet, build, test, race, lint, govulncheck — what CI run
 
 There is no Homebrew, apt/dnf, Scoop or container package yet; pick one of the three ways above.
 
+## Demo
+
+A recorded, offline walkthrough of setup and a dry run. It does not make live API calls.
+
+![aicm quick-start terminal demo](docs/assets/aicm-demo.gif)
+
 ## Quick start
 
 ### 1. Create a project and import questions
@@ -155,6 +161,25 @@ aicm verify
 ```
 
 Reports are written to the configured report directory (default `reports/`). For CSV or JSON data use `aicm export`.
+
+## What a report looks like
+
+A recorded report view, generated from saved data without live API calls. The figures shown are sample observations, not a benchmark.
+
+![aicm report terminal demo](docs/assets/aicm-report.gif)
+
+[Static report screenshot](docs/assets/aicm-report.png)
+
+## Question design shapes what you observe
+
+A small observation on **2026-11-28**, using Perplexity (`openai/gpt-5.6-sol`), `--store hash-only`, and the same conditions for both five-question sets, returned different citation counts:
+
+- General-knowledge questions (for example, quantum entanglement, the aurora, and olive-oil production): own-site citations **0.0% (n=0/5)**.
+- Questions needing current information (for example, Tokyo's current population, Japan's prime minister, the latest stable Go release, Japan's inflation rate, and G20 membership): own-site citations **60.0% (n=3/5)**.
+
+The report also shows domain citation rates such as **60.0% (n=3/5)** for the own domain and **20.0% (n=1/5)** for other domains; these are figures from that exact sample, not benchmarks.
+
+This is a single small sample, not evidence that changing a question causes more citations or that other providers and models behave the same way. A zero citation count can mean that the provider did not run web retrieval or return citation metadata; it does not necessarily mean the site was searched and rejected. Keep the question set and model fixed when comparing periods.
 
 ## Metrics
 
