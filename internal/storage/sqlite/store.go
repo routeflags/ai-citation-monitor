@@ -143,8 +143,9 @@ func (d *DB) QuestionVersion(ctx context.Context, questionID int64, version stri
 	return text, err
 }
 
-// RecordQuestionSet stores the provenance of an imported question set.
-func (d *DB) RecordQuestionSet(ctx context.Context, projectID int64, setVersion, sha, path string) (string, error) {
+// RecordQuestionSet stores the provenance of an imported question set, including the
+// status its brand terms were declared with ("" when the set declared none).
+func (d *DB) RecordQuestionSet(ctx context.Context, projectID int64, setVersion, sha, path, brandTermsStatus string) (string, error) {
 	var existing int64
 	err := d.sql.QueryRowContext(ctx, `SELECT id FROM question_sets WHERE sha256 = ?`, sha).Scan(&existing)
 	if err == nil {
@@ -154,11 +155,44 @@ func (d *DB) RecordQuestionSet(ctx context.Context, projectID int64, setVersion,
 		return "", err
 	}
 	if _, err := d.sql.ExecContext(ctx, `
-		INSERT INTO question_sets (project_id, set_version, sha256, path, loaded_at)
-		VALUES (?, ?, ?, ?, ?)`, projectID, setVersion, sha, path, NowUTC()); err != nil {
+			INSERT INTO question_sets (project_id, set_version, sha256, path, loaded_at, brand_terms_status)
+			VALUES (?, ?, ?, ?, ?, ?)`, projectID, setVersion, sha, path, NowUTC(), brandTermsStatus); err != nil {
 		return "", err
 	}
 	return "inserted", nil
+}
+
+// BrandTermsStatuses maps each given question-set sha256 to the brand_terms_status
+// recorded with it. A sha that was never recorded is absent from the map, and a set
+// that declared no status maps to "". Both mean "not declared": neither is ever
+// read as "confirmed".
+func (d *DB) BrandTermsStatuses(ctx context.Context, shas []string) (map[string]string, error) {
+	statuses := make(map[string]string, len(shas))
+	args := make([]any, 0, len(shas))
+	for _, sha := range shas {
+		if strings.TrimSpace(sha) == "" {
+			continue
+		}
+		args = append(args, sha)
+	}
+	if len(args) == 0 {
+		return statuses, nil
+	}
+	rows, err := d.sql.QueryContext(ctx,
+		`SELECT sha256, brand_terms_status FROM question_sets WHERE sha256 IN (`+placeholders(len(args))+`)`,
+		args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var sha, status string
+		if err := rows.Scan(&sha, &status); err != nil {
+			return nil, err
+		}
+		statuses[sha] = status
+	}
+	return statuses, rows.Err()
 }
 
 // AddCompetitor registers a competitor domain.

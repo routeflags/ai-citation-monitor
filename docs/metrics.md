@@ -47,6 +47,30 @@ Details that matter:
   failed or `unknown` answers are listed separately, and questions with no run at
   all are listed as "not measured".
 
+## Brand terms status
+
+A question set may declare `brand_terms_status: proposed | confirmed`. The value is
+recorded on `question_sets` at import, and the report prints it in the conditions.
+It is **provenance, not a measurement rule**: it changes no numerator and no
+denominator.
+
+- `proposed` — the term list is still a guess. The report says so next to the brand
+  mention rate, because that rate depends on how the terms were chosen.
+- `confirmed` — the list is settled. The report says so and adds no caution.
+- not declared — the status was not recorded for the set behind the run: it was
+  imported before the status was recorded, or the run names no question set (a run
+  made after importing only a CSV list). The report says `not declared`, never
+  `confirmed`.
+
+The record is append-only. A set that was recorded without a status keeps that
+value even when the same file is imported again: the SHA is the whole file, so the
+same bytes are the same set, and `questions import` says what the record holds
+(with a warning when the file declares something else). Change the question set —
+and its `set_version` — to record a new status.
+
+When a period mixes sets with different statuses, every status is listed
+(`proposed` first) and a single `proposed` set is enough to keep the caution.
+
 ## Formatting rules
 
 - A rate is written as the percentage with its denominator: `40.0% (n=2/5)`.

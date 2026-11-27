@@ -8,6 +8,9 @@ type labels struct {
 	title, generated                                                                                       string
 	conditionsH, conditionsNote, item, value                                                               string
 	provider, model, stage, endpoint, search, method, qsVersion, qsSha, normVersion, observedRange         string
+	brandTermsStatus, brandTermsStatusProposed, brandTermsStatusConfirmed, brandTermsStatusNotDeclared     string
+	brandTermsStatusNote                                                                                   string
+	brandTermsProposedCaution                                                                              string
 	configH, site, ownDomain, competitors, brandTerms, market, subdomainsIncluded, exactOnly               string
 	brandTermsMissing                                                                                      string
 	observedH, observedNote, run, success, failure, cancelled, unknown, unknownRuns, count, noRuns         string
@@ -35,9 +38,18 @@ var enLabels = labels{
 	provider: "provider", model: "model", stage: "stage",
 	endpoint: "API endpoint version", search: "search enabled", method: "measurement method",
 	qsVersion: "question set version", qsSha: "question set sha256", normVersion: "normaliser version",
-	observedRange: "observed range (UTC)",
-	configH:       "Configuration used for aggregation (domain matching and labels)",
-	site:          "site", ownDomain: "own domain", competitors: "competitor domains",
+	observedRange:               "observed range (UTC)",
+	brandTermsStatus:            "brand terms status (question set)",
+	brandTermsStatusProposed:    "proposed (not confirmed)",
+	brandTermsStatusConfirmed:   "confirmed",
+	brandTermsStatusNotDeclared: "not declared",
+	brandTermsStatusNote: "The status is what the imported question set declared about its own `brand_terms`. " +
+		"The terms actually matched come from the configuration, so the status says how settled the term " +
+		"list is, not which words were used.",
+	brandTermsProposedCaution: "**The brand terms are not confirmed yet (proposed).** A mention rate depends " +
+		"on how the terms are chosen, so read the rate as a value taken before the list was confirmed.",
+	configH: "Configuration used for aggregation (domain matching and labels)",
+	site:    "site", ownDomain: "own domain", competitors: "competitor domains",
 	brandTerms: "brand terms", market: "market",
 	subdomainsIncluded: " (subdomains included)", exactOnly: " (exact match only)",
 	brandTermsMissing: "No brand terms are configured, so the brand mention rate is `— (not measured)`.",
@@ -104,9 +116,17 @@ var jaLabels = labels{
 	provider: "プロバイダー", model: "モデル", stage: "stage",
 	endpoint: "API エンドポイント版", search: "検索の有効化", method: "測定方法",
 	qsVersion: "質問セット版", qsSha: "質問セット sha256", normVersion: "正規化仕様の版",
-	observedRange: "観測の範囲（UTC）",
-	configH:       "集計に使った設定（ドメイン判定とラベルに使う）",
-	site:          "サイト", ownDomain: "自社ドメイン", competitors: "競合ドメイン",
+	observedRange:               "観測の範囲（UTC）",
+	brandTermsStatus:            "ブランド語の状態（質問セット）",
+	brandTermsStatusProposed:    "未確定（proposed）",
+	brandTermsStatusConfirmed:   "確定済み",
+	brandTermsStatusNotDeclared: "未宣言",
+	brandTermsStatusNote: "状態は、取り込んだ質問セットが自身の `brand_terms` について宣言したもの。" +
+		"実際に照合に使う語は設定側のブランド語なので、状態は語の確定度を表し、どの語を使ったかは表さない。",
+	brandTermsProposedCaution: "**ブランド語はまだ確定していない（proposed）。** 言及率は語の選び方に" +
+		"依存するため、確定前の値として読むこと。",
+	configH: "集計に使った設定（ドメイン判定とラベルに使う）",
+	site:    "サイト", ownDomain: "自社ドメイン", competitors: "競合ドメイン",
 	brandTerms: "ブランド語", market: "市場",
 	subdomainsIncluded: "（サブドメインを含む）", exactOnly: "（完全一致のみ）",
 	brandTermsMissing: "ブランド語が未設定のため、ブランド言及率は `—（未測定）` になる。",

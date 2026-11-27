@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -210,6 +211,7 @@ func (a *App) importYAML(cmd *cobra.Command, opts questionImportOptions) error {
 			summary := set.Summarise()
 			fmt.Fprintf(a.Out, "set_version: %s\nsite_id: %s\nown_domain: %s\nmarket: %s\nquestions: %d\n",
 				summary.SetVersion, summary.SiteID, summary.OwnDomain, summary.Market, summary.Questions)
+			fmt.Fprintf(a.Out, "brand terms status: %s\n", brandTermsStatusDisplay(summary.BrandTermsStatus))
 			for _, stage := range summary.Stages {
 				fmt.Fprintf(a.Out, "stage %s: %d questions x %d run = %d round trips per provider\n",
 					stage.Name, stage.Questions, stage.RunsPerQuestion, stage.RoundTrips)
@@ -253,19 +255,37 @@ func (a *App) importYAML(cmd *cobra.Command, opts questionImportOptions) error {
 			inserted++
 		}
 	}
-	status, err := db.RecordQuestionSet(ctx, project.ID, set.SetVersion, set.SHA256, opts.file)
+	status, err := db.RecordQuestionSet(ctx, project.ID, set.SetVersion, set.SHA256, opts.file,
+		strings.TrimSpace(set.BrandTermsStatus))
 	if err != nil {
 		return failf(ExitConfig, "db_write_failed", "%v", err)
+	}
+	// The record is append-only, so a set that was imported before the status was
+	// recorded keeps the empty value even when the same bytes are imported again.
+	// Print what the record says, and say so when the file disagrees: telling the
+	// operator the file's value would claim a record that does not exist.
+	recordedStatus, err := recordedBrandTermsStatus(ctx, db, set.SHA256)
+	if err != nil {
+		return failf(ExitConfig, "db_unavailable", "%v", err)
+	}
+	declaredStatus := strings.TrimSpace(set.BrandTermsStatus)
+	if recordedStatus != declaredStatus {
+		fmt.Fprintf(a.Err, "warning: the question set is already recorded with brand terms status %q; this file declares %q. "+
+			"A recorded set is not updated (append-only), so a report keeps reading the recorded value; "+
+			"change the question set (and its set_version) to record the new status.\n",
+			brandTermsStatusDisplay(recordedStatus), brandTermsStatusDisplay(declaredStatus))
 	}
 
 	if a.JSON {
 		return a.PrintJSON(map[string]any{
 			"inserted": inserted, "updated": updated, "question_set": status,
 			"sha256": set.SHA256, "set_version": set.SetVersion,
+			"brand_terms_status": recordedStatus,
 		})
 	}
 	fmt.Fprintf(a.Out, "questions: inserted=%d updated=%d question_set=%s\n", inserted, updated, status)
 	fmt.Fprintf(a.Out, "sha256: %s\n", set.SHA256)
+	fmt.Fprintf(a.Out, "brand terms status: %s\n", brandTermsStatusDisplay(recordedStatus))
 	return nil
 }
 
@@ -365,4 +385,25 @@ func validCategory(category string) bool {
 		}
 	}
 	return false
+}
+
+// brandTermsStatusDisplay names a status the way the report does, so an import that
+// wrote nothing keeps reading as "not declared" instead of a blank field.
+func brandTermsStatusDisplay(status string) string {
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return "not declared"
+	}
+	return status
+}
+
+// recordedBrandTermsStatus reads back what the database holds for one question set.
+// It is the only source the report uses, so an import prints this and not the file's
+// value: a set recorded before the status existed cannot be updated later.
+func recordedBrandTermsStatus(ctx context.Context, db *sqlite.DB, sha string) (string, error) {
+	statuses, err := db.BrandTermsStatuses(ctx, []string{sha})
+	if err != nil {
+		return "", err
+	}
+	return statuses[sha], nil
 }

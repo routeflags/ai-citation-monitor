@@ -3,9 +3,12 @@ package sqlite
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"path/filepath"
 	"testing"
+
+	"github.com/routeflags/ai-citation-monitor/migrations"
 )
 
 func newTestDB(t *testing.T) *DB {
@@ -192,6 +195,127 @@ func TestIntegrityDetectsEditedAnswer(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("an edited answer was not detected: %+v", issues)
+	}
+}
+
+// The brand terms status is provenance of the imported set (issue #7, D20): it is
+// written with the set, survives the re-import of the same file, and is read back by
+// sha. An unrecorded sha and an empty value both mean "not declared".
+func TestRecordQuestionSetKeepsTheBrandTermsStatus(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	project, _ := seedProject(t, db)
+
+	state, err := db.RecordQuestionSet(ctx, project.ID, "1.0.0", "sha-proposed", "set.yml", "proposed")
+	if err != nil || state != "inserted" {
+		t.Fatalf("first record: state=%q err=%v", state, err)
+	}
+	// The same bytes again: skipped, no second row, and nothing rewrites the status.
+	state, err = db.RecordQuestionSet(ctx, project.ID, "1.0.0", "sha-proposed", "set.yml", "proposed")
+	if err != nil || state != "skipped" {
+		t.Fatalf("re-import of the same sha: state=%q err=%v", state, err)
+	}
+	if _, err := db.RecordQuestionSet(ctx, project.ID, "1.0.0", "sha-undeclared", "other.yml", ""); err != nil {
+		t.Fatalf("record without a status: %v", err)
+	}
+
+	statuses, err := db.BrandTermsStatuses(ctx, []string{"sha-proposed", "sha-undeclared", "sha-missing", ""})
+	if err != nil {
+		t.Fatalf("BrandTermsStatuses: %v", err)
+	}
+	if len(statuses) != 2 {
+		t.Fatalf("statuses = %v, want exactly the two recorded sets", statuses)
+	}
+	if statuses["sha-proposed"] != "proposed" {
+		t.Errorf("sha-proposed = %q, want proposed", statuses["sha-proposed"])
+	}
+	if value, ok := statuses["sha-undeclared"]; !ok || value != "" {
+		t.Errorf("sha-undeclared = %q (present=%v), want an empty value for a set that declared nothing", value, ok)
+	}
+	if _, ok := statuses["sha-missing"]; ok {
+		t.Error("a sha that was never recorded must be absent, not an empty status")
+	}
+
+	counts, err := db.Counts(ctx)
+	if err != nil {
+		t.Fatalf("Counts: %v", err)
+	}
+	if counts.QuestionSets != 2 {
+		t.Fatalf("question_sets = %d, want 2 (the re-import wrote nothing)", counts.QuestionSets)
+	}
+}
+
+// A database created before migration 0003 keeps its rows: the new column is empty,
+// which the report reads as "not declared" rather than "confirmed".
+func TestOldQuestionSetsReadAsNotDeclared(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	project, _ := seedProject(t, db)
+	if _, err := db.RecordQuestionSet(ctx, project.ID, "1.0.0", "sha-old", "set.yml", ""); err != nil {
+		t.Fatalf("RecordQuestionSet: %v", err)
+	}
+	statuses, err := db.BrandTermsStatuses(ctx, []string{"sha-old"})
+	if err != nil {
+		t.Fatalf("BrandTermsStatuses: %v", err)
+	}
+	if value := statuses["sha-old"]; value != "" {
+		t.Errorf("status = %q, want an empty value", value)
+	}
+}
+
+// A database written by v0.2.0 has question_sets rows and no status column. Opening it
+// with this build applies migration 0003 without touching those rows, and the report
+// reads them as "not declared" rather than as anything measured.
+func TestUpgradingAnOldDatabaseLeavesQuestionSetsNotDeclared(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	handle, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open the old database: %v", err)
+	}
+	for _, name := range []string{"0001_init.sql", "0002_response_body_stored.sql"} {
+		body, err := migrations.FS.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if _, err := handle.Exec(string(body)); err != nil {
+			t.Fatalf("apply %s: %v", name, err)
+		}
+	}
+	for _, statement := range []string{
+		`INSERT INTO schema_migrations (version, applied_at) VALUES (1, 'then'), (2, 'then')`,
+		`INSERT INTO projects (site_id, own_domain, market, language, created_at, updated_at)
+			VALUES ('demo', 'example.shop', 'ja-JP', 'ja', 'then', 'then')`,
+		`INSERT INTO question_sets (project_id, set_version, sha256, path, loaded_at)
+			VALUES (1, '1.0.0', 'sha-old', 'set.yml', 'then')`,
+	} {
+		if _, err := handle.Exec(statement); err != nil {
+			t.Fatalf("%s: %v", statement, err)
+		}
+	}
+	if err := handle.Close(); err != nil {
+		t.Fatalf("close the old database: %v", err)
+	}
+
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open (upgrade): %v", err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	statuses, err := db.BrandTermsStatuses(ctx, []string{"sha-old"})
+	if err != nil {
+		t.Fatalf("BrandTermsStatuses: %v", err)
+	}
+	value, ok := statuses["sha-old"]
+	if !ok || value != "" {
+		t.Fatalf("status of a pre-0003 row = %q (present=%v), want an empty value", value, ok)
+	}
+	counts, err := db.Counts(ctx)
+	if err != nil {
+		t.Fatalf("Counts: %v", err)
+	}
+	if counts.QuestionSets != 1 {
+		t.Fatalf("question_sets = %d after the upgrade, want 1 (the rows are kept)", counts.QuestionSets)
 	}
 }
 

@@ -85,7 +85,7 @@ stored rows (D19).
 | `projects` | one site: `site_id`, `own_domain`, `subdomains`, `market`, `language` |
 | `questions` | stable question keys with their current text |
 | `question_versions` | every distinct text of a question, with a content hash |
-| `question_sets` | provenance of an imported question set (version, sha256, path) |
+| `question_sets` | provenance of an imported question set (version, sha256, path, `brand_terms_status`) |
 | `competitors` | competitor domains, applied at report time |
 | `runs` | one attempted call: conditions, plan key, status, observability, counts |
 | `responses` | answer text, its sha256, the sanitised raw JSON, usage, `body_stored` |
@@ -93,6 +93,15 @@ stored rows (D19).
 | `mentions` | brand terms that hit the answer, with occurrences and an ambiguity flag |
 | `usage_records` | tokens and tool calls the provider reported (no cost) |
 | `v_runs_valid` | `SELECT * FROM runs WHERE status = 'success'` — the denominator |
+
+`question_sets` also carries the declared status of the imported brand terms
+(`proposed` / `confirmed`, migration 0003). It is provenance: a report resolves it
+from the `question_set_sha256` recorded on its runs, never from the YAML file on
+disk, and the value changes no rate. An empty value means "not declared" (a set
+recorded before the column existed, or a run with no question set at all) and is
+never read as confirmed. Because a set is identified by the SHA of the whole file,
+an identical re-import cannot change the recorded status: `questions import` prints
+the recorded value and warns when the file declares a different one.
 
 ### Append-only
 

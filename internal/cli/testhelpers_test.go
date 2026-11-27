@@ -34,4 +34,13 @@ func (h *sqlHandle) exec() {
 	}
 }
 
+func (h *sqlHandle) text() string {
+	h.t.Helper()
+	var value string
+	if err := h.db.QueryRow(h.query).Scan(&value); err != nil {
+		h.t.Fatalf("%s: %v", h.query, err)
+	}
+	return value
+}
+
 func (h *sqlHandle) close() { h.db.Close() }

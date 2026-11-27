@@ -1,0 +1,14 @@
+-- 0003: record the declared status of the imported brand terms.
+--
+-- `aicm questions import` accepts `brand_terms_status: proposed | confirmed`. The
+-- value says how settled the brand term list is, and a mention rate depends on how
+-- the terms were chosen, so the report has to be able to say "these terms were not
+-- confirmed yet" next to the rate (issue #7, D20).
+--
+-- The status belongs to the question set, not to a run: it is provenance of the
+-- imported set, and one row here reaches every run that names this set.
+--
+-- The empty default means "not declared": rows written before this column existed,
+-- and question sets imported from a CSV list (which carries no status). An empty
+-- value is never read as 'confirmed'.
+ALTER TABLE question_sets ADD COLUMN brand_terms_status TEXT NOT NULL DEFAULT '';

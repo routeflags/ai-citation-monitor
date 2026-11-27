@@ -28,6 +28,14 @@ var Categories = []string{
 // StageNames is the closed vocabulary for a stage.
 var StageNames = []string{"smoke", "initial", "regular"}
 
+// BrandTermsStatus values accepted in a question set. "proposed" means the term
+// list is still a guess: a mention rate depends on how the terms are chosen, so a
+// report built from such a set has to say that the terms were not confirmed.
+const (
+	BrandTermsStatusProposed  = "proposed"
+	BrandTermsStatusConfirmed = "confirmed"
+)
+
 // Question is one fixed question.
 type Question struct {
 	Key      string `yaml:"id" json:"question_key"`
@@ -210,7 +218,7 @@ func (s *Set) Validate(strict bool) (errorsOut []string, warnings []string) {
 		warn("W041", "brand_terms is empty: the brand mention rate cannot be measured")
 	}
 	status := strings.TrimSpace(s.BrandTermsStatus)
-	if status != "" && status != "proposed" && status != "confirmed" {
+	if status != "" && status != BrandTermsStatusProposed && status != BrandTermsStatusConfirmed {
 		err("E043", fmt.Sprintf("brand_terms_status must be proposed or confirmed, got %q", status))
 	}
 	if len(s.Competitors) == 0 {
@@ -249,15 +257,16 @@ func (s *Set) StageQuestions(stage string) []Question {
 
 // Summary is the human-readable view printed by `questions import --check`.
 type Summary struct {
-	SetVersion  string         `json:"set_version"`
-	SiteID      string         `json:"site_id"`
-	OwnDomain   string         `json:"own_domain"`
-	Market      string         `json:"market"`
-	SHA256      string         `json:"sha256"`
-	Questions   int            `json:"questions"`
-	BrandTerms  int            `json:"brand_terms"`
-	Competitors int            `json:"competitors"`
-	Stages      []StageSummary `json:"stages"`
+	SetVersion       string         `json:"set_version"`
+	SiteID           string         `json:"site_id"`
+	OwnDomain        string         `json:"own_domain"`
+	Market           string         `json:"market"`
+	BrandTermsStatus string         `json:"brand_terms_status"`
+	SHA256           string         `json:"sha256"`
+	Questions        int            `json:"questions"`
+	BrandTerms       int            `json:"brand_terms"`
+	Competitors      int            `json:"competitors"`
+	Stages           []StageSummary `json:"stages"`
 }
 
 // StageSummary is one stage line of the summary.
@@ -271,14 +280,15 @@ type StageSummary struct {
 // Summarise builds the display summary.
 func (s *Set) Summarise() Summary {
 	summary := Summary{
-		SetVersion:  s.SetVersion,
-		SiteID:      s.SiteID,
-		OwnDomain:   s.OwnDomain,
-		Market:      s.Market,
-		SHA256:      s.SHA256,
-		Questions:   len(s.Questions),
-		BrandTerms:  len(s.BrandTerms),
-		Competitors: len(s.Competitors),
+		SetVersion:       s.SetVersion,
+		SiteID:           s.SiteID,
+		OwnDomain:        s.OwnDomain,
+		Market:           s.Market,
+		BrandTermsStatus: strings.TrimSpace(s.BrandTermsStatus),
+		SHA256:           s.SHA256,
+		Questions:        len(s.Questions),
+		BrandTerms:       len(s.BrandTerms),
+		Competitors:      len(s.Competitors),
 	}
 	names := make([]string, 0, len(s.Stages))
 	for name := range s.Stages {

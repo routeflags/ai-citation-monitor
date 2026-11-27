@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/routeflags/ai-citation-monitor/internal/question"
 	"github.com/routeflags/ai-citation-monitor/internal/storage/sqlite"
 )
 
@@ -103,6 +104,19 @@ func PreviousPeriod(p Period) (Period, bool) {
 	return periodFromDates(previousStart, previousEnd), true
 }
 
+// BrandTermsNotDeclared is the report-side value for a question set whose records
+// carry no brand_terms_status: a set imported before the status was recorded, a CSV
+// list (which has no status field), or a run with no question set at all. It is
+// never rendered as "confirmed".
+const BrandTermsNotDeclared = "not_declared"
+
+// The two statuses a question set can declare, re-exported so a renderer does not
+// have to import the YAML parser.
+const (
+	BrandTermsStatusProposed  = question.BrandTermsStatusProposed
+	BrandTermsStatusConfirmed = question.BrandTermsStatusConfirmed
+)
+
 // Conditions are the measurement conditions actually present in the records.
 type Conditions struct {
 	Providers           []string `json:"providers"`
@@ -112,10 +126,25 @@ type Conditions struct {
 	ToolVersions        []string `json:"tool_versions"`
 	QuestionSetVersions []string `json:"question_set_versions"`
 	QuestionSetSHA256s  []string `json:"question_set_sha256s"`
-	MeasurementMethods  []string `json:"measurement_methods"`
-	SearchEnabled       bool     `json:"search_enabled"`
-	ObservedFirst       string   `json:"observed_first"`
-	ObservedLast        string   `json:"observed_last"`
+	// BrandTermsStatuses are the brand_terms_status values recorded for the question
+	// sets behind the runs of the period, deduplicated and normalised to proposed /
+	// confirmed / not_declared. Empty when the period recorded no runs at all.
+	BrandTermsStatuses []string `json:"brand_terms_statuses"`
+	MeasurementMethods []string `json:"measurement_methods"`
+	SearchEnabled      bool     `json:"search_enabled"`
+	ObservedFirst      string   `json:"observed_first"`
+	ObservedLast       string   `json:"observed_last"`
+}
+
+// HasBrandTermsProposed reports whether any question set behind the period declared
+// its brand terms as still being proposed.
+func (c Conditions) HasBrandTermsProposed() bool {
+	for _, status := range c.BrandTermsStatuses {
+		if status == BrandTermsStatusProposed {
+			return true
+		}
+	}
+	return false
 }
 
 // Totals are the counts behind every rate in the period.
@@ -155,6 +184,10 @@ func LoadPeriod(ctx context.Context, db *sqlite.DB, period Period, filter sqlite
 	if err != nil {
 		return nil, err
 	}
+	statusBySHA, err := db.BrandTermsStatuses(ctx, questionSetHashes(runs))
+	if err != nil {
+		return nil, err
+	}
 
 	result := &Result{
 		Period:    period,
@@ -163,6 +196,9 @@ func LoadPeriod(ctx context.Context, db *sqlite.DB, period Period, filter sqlite
 		Groups:    Build(runs, citations, opts),
 	}
 	result.Conditions = buildConditions(runs)
+	// The status comes from the question_sets records the runs name, never from the
+	// YAML file on disk: a report has to stay readable after the set is edited (D6).
+	result.Conditions.BrandTermsStatuses = brandTermsStatuses(runs, statusBySHA)
 	result.Totals = buildTotals(runs)
 	result.Totals.Groups = len(result.Groups)
 	return result, nil
@@ -247,4 +283,57 @@ func sortedKeys(set map[string]bool) []string {
 	}
 	sort.Strings(values)
 	return values
+}
+
+// questionSetHashes lists the distinct question-set hashes the runs name.
+func questionSetHashes(runs []sqlite.Run) []string {
+	hashes := make([]string, 0, len(runs))
+	seen := map[string]bool{}
+	for _, run := range runs {
+		sha := strings.TrimSpace(run.QuestionSetSHA256)
+		if sha == "" || seen[sha] {
+			continue
+		}
+		seen[sha] = true
+		hashes = append(hashes, sha)
+	}
+	return hashes
+}
+
+// brandTermsStatuses collects the declared status of the question sets behind the
+// runs, deduplicated and in a fixed order: "proposed" first, because it is the one
+// that changes how the mention rate must be read, then "confirmed", then "not
+// declared". A period without runs returns nothing: nothing was recorded, so the
+// report must not print a status line for it.
+func brandTermsStatuses(runs []sqlite.Run, statusBySHA map[string]string) []string {
+	if len(runs) == 0 {
+		return nil
+	}
+	found := map[string]bool{}
+	for _, run := range runs {
+		status := statusBySHA[strings.TrimSpace(run.QuestionSetSHA256)]
+		found[normalizeBrandTermsStatus(status)] = true
+	}
+	order := []string{BrandTermsStatusProposed, BrandTermsStatusConfirmed, BrandTermsNotDeclared}
+	statuses := make([]string, 0, len(order))
+	for _, status := range order {
+		if found[status] {
+			statuses = append(statuses, status)
+		}
+	}
+	return statuses
+}
+
+// normalizeBrandTermsStatus maps a recorded value onto the report vocabulary. An
+// unknown value (a row edited by hand) falls back to "not declared" rather than to
+// "confirmed": the safe side is the one that does not claim the terms were settled.
+func normalizeBrandTermsStatus(status string) string {
+	switch strings.TrimSpace(status) {
+	case BrandTermsStatusProposed:
+		return BrandTermsStatusProposed
+	case BrandTermsStatusConfirmed:
+		return BrandTermsStatusConfirmed
+	default:
+		return BrandTermsNotDeclared
+	}
 }

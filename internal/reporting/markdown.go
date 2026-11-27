@@ -63,7 +63,7 @@ func writeConditions(b *strings.Builder, text labels, result *analysis.Result, o
 	conditions := result.Conditions
 	b.WriteString("## " + text.conditionsH + "\n\n")
 	b.WriteString(text.conditionsNote + "\n\n")
-	writeTable(b, []string{text.item, text.value}, [][]string{
+	rows := [][]string{
 		{text.provider, join(text, conditions.Providers)},
 		{text.model, join(text, conditions.Models)},
 		{text.stage, join(text, conditions.Stages)},
@@ -74,8 +74,18 @@ func writeConditions(b *strings.Builder, text labels, result *analysis.Result, o
 		{text.qsSha, shortHashes(text, conditions.QuestionSetSHA256s)},
 		{text.normVersion, join(text, conditions.ToolVersions)},
 		{text.observedRange, zeroAsDash(conditions.ObservedFirst) + " - " + zeroAsDash(conditions.ObservedLast)},
-	})
+	}
+	// The status is a recorded condition, so it sits in this table and not in the
+	// configuration block below. A period without runs has no status to show: the
+	// report must not invent one.
+	if len(conditions.BrandTermsStatuses) > 0 {
+		rows = append(rows, []string{text.brandTermsStatus, brandTermsStatusText(text, conditions.BrandTermsStatuses)})
+	}
+	writeTable(b, []string{text.item, text.value}, rows)
 	b.WriteString("\n")
+	if len(conditions.BrandTermsStatuses) > 0 {
+		b.WriteString(text.brandTermsStatusNote + "\n\n")
+	}
 
 	if opts.Config == nil {
 		return
@@ -142,6 +152,11 @@ func writeDerived(b *strings.Builder, text labels, lang i18n.Lang, result *analy
 		}
 		writeTable(b, []string{text.provider, text.model, text.stage, text.citedRate, text.brandRate}, rows)
 		b.WriteString("\n" + text.brandNote + "\n\n")
+		// A mention rate rests on the chosen terms, so an unconfirmed term list is
+		// stated next to the rate rather than only in the conditions table.
+		if result.Conditions.HasBrandTermsProposed() {
+			b.WriteString(text.brandTermsProposedCaution + "\n\n")
+		}
 	}
 
 	b.WriteString("### " + text.aeoQH + "\n\n")
@@ -305,6 +320,30 @@ func joinOrNone(text labels, values []string) string {
 		return text.none
 	}
 	return strings.Join(values, ", ")
+}
+
+// brandTermsStatusText renders the recorded statuses in the order analysis put them
+// in (proposed first), so a mixed period reads as "proposed, confirmed".
+func brandTermsStatusText(text labels, statuses []string) string {
+	parts := make([]string, 0, len(statuses))
+	for _, status := range statuses {
+		parts = append(parts, brandTermsStatusLabel(text, status))
+	}
+	if len(parts) == 0 {
+		return text.notMeasured
+	}
+	return strings.Join(parts, ", ")
+}
+
+func brandTermsStatusLabel(text labels, status string) string {
+	switch status {
+	case analysis.BrandTermsStatusProposed:
+		return text.brandTermsStatusProposed
+	case analysis.BrandTermsStatusConfirmed:
+		return text.brandTermsStatusConfirmed
+	default:
+		return text.brandTermsStatusNotDeclared
+	}
 }
 
 func zeroAsDash(value string) string {

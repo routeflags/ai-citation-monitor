@@ -15,8 +15,10 @@ subdomains: true
 market: ja-JP
 language: en
 
-# brand_terms_status: proposed | confirmed. Accepted and validated on import;
-# nothing reads it yet, so no report line depends on it.
+# brand_terms_status: proposed | confirmed. Recorded with the question set on
+# import and shown in the report's conditions, because a mention rate depends on how
+# the terms were chosen. Omit it (or leave it empty) to say "not declared" — an
+# undeclared set is never reported as confirmed.
 brand_terms_status: proposed
 brand_terms:
   - Example

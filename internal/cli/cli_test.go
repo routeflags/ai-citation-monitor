@@ -341,6 +341,32 @@ func writeQuestionSet(t *testing.T, h *harness, content string) string {
 	return path
 }
 
+// questionSetWithStatus is the minimal contract with the same questions as
+// testdata/questions.yml, so the brand-terms-status tests vary only that field. An
+// empty status writes no key at all (the "not declared" case).
+func questionSetWithStatus(status string) string {
+	line := ""
+	if status != "" {
+		line = "brand_terms_status: " + status + "\n"
+	}
+	return `set_version: "1.0.0"
+site_id: demo
+own_domain: example.shop
+market: ja-JP
+` + line + `brand_terms:
+  - Example
+competitors:
+  - rival.example
+questions:
+  - { id: Q01, text: "THCVとTHCの違いは？", category: comparison }
+  - { id: Q02, text: "THCHとは何ですか？", category: definition }
+stages:
+  smoke:
+    runs_per_question: 1
+    question_ids: [Q01, Q02]
+`
+}
+
 func TestQuestionsImportWarnsAboutBrokenNestingByDefault(t *testing.T) {
 	h := newHarness(t)
 	path := writeQuestionSet(t, h, brokenNesting)
@@ -434,6 +460,172 @@ func TestQuestionsImportStrictAcceptsACorrectSet(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "questions: 2") {
 		t.Errorf("stdout:\n%s", stdout)
+	}
+}
+
+// The report states how settled the brand term list is (issue #7, D20). The value
+// comes from the question_sets record written at import, so the rate is never
+// presented as if the terms were confirmed when the set said they were not.
+func TestReportShowsTheBrandTermsStatusRecordedAtImport(t *testing.T) {
+	h := newHarness(t)
+	path := writeQuestionSet(t, h, questionSetWithStatus("proposed"))
+	if code, stdout, stderr := h.run("questions", "import", "--file", path); code != ExitOK {
+		t.Fatalf("import = %d: %s\n%s", code, stderr, stdout)
+	}
+	stored := h.query("SELECT brand_terms_status FROM question_sets")
+	defer stored.close()
+	if got := stored.text(); got != "proposed" {
+		t.Fatalf("question_sets.brand_terms_status = %q, want proposed", got)
+	}
+
+	if code, _, stderr := h.run("run", "--provider", "openai", "--repeat", "1", "--yes"); code != ExitOK {
+		t.Fatalf("run = %d: %s", code, stderr)
+	}
+
+	code, stdout, stderr := h.run("report", "--period", "2026-11-15", "--stdout")
+	if code != ExitOK {
+		t.Fatalf("report = %d: %s", code, stderr)
+	}
+	for _, want := range []string{
+		"| brand terms status (question set) | proposed (not confirmed) |",
+		"The brand terms are not confirmed yet (proposed).",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("the English report is missing %q:\n%s", want, stdout)
+		}
+	}
+	// The rate itself is unchanged: the status is provenance, not a new denominator.
+	if !strings.Contains(stdout, "(n=2/2)") {
+		t.Errorf("the mention rate must keep its denominator:\n%s", stdout)
+	}
+
+	// The Japanese report says the same thing with its own wording.
+	configText := strings.Replace(readFileString(t, h.configPath),
+		"[report]\nlanguage = \"en\"", "[report]\nlanguage = \"ja\"", 1)
+	if err := os.WriteFile(h.configPath, []byte(configText), 0o644); err != nil {
+		t.Fatalf("rewrite config: %v", err)
+	}
+	code, stdout, stderr = h.run("report", "--period", "2026-11-15", "--stdout")
+	if code != ExitOK {
+		t.Fatalf("report (ja) = %d: %s", code, stderr)
+	}
+	for _, want := range []string{
+		"| ブランド語の状態（質問セット） | 未確定（proposed） |",
+		"ブランド語はまだ確定していない（proposed）。",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("the Japanese report is missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
+// A confirmed set and an undeclared one are different from a proposed one. A period
+// that measured both a proposed and a confirmed set lists both (proposed first) and
+// keeps the caution, so a reader can see the term list was not settled throughout.
+func TestReportListsBothStatusesWhenThePeriodMixesQuestionSets(t *testing.T) {
+	h := newHarness(t)
+	path := writeQuestionSet(t, h, questionSetWithStatus("proposed"))
+	if code, _, stderr := h.run("questions", "import", "--file", path); code != ExitOK {
+		t.Fatalf("import (proposed) = %d: %s", code, stderr)
+	}
+	if code, _, stderr := h.run("run", "--provider", "openai", "--repeat", "1", "--yes"); code != ExitOK {
+		t.Fatalf("run (proposed) = %d: %s", code, stderr)
+	}
+
+	// The status is part of the hashed file, so changing it is a new question set.
+	path = writeQuestionSet(t, h, questionSetWithStatus("confirmed"))
+	if code, _, stderr := h.run("questions", "import", "--file", path); code != ExitOK {
+		t.Fatalf("import (confirmed) = %d: %s", code, stderr)
+	}
+	if code, _, stderr := h.run("run", "--provider", "openai", "--repeat", "1", "--session", "second", "--yes"); code != ExitOK {
+		t.Fatalf("run (confirmed) = %d: %s", code, stderr)
+	}
+
+	sets := h.query("SELECT COUNT(DISTINCT question_set_sha256) FROM runs")
+	defer sets.close()
+	if got := sets.int64(); got != 2 {
+		t.Fatalf("distinct question set hashes = %d, want 2 (the status change is a new set)", got)
+	}
+
+	code, stdout, stderr := h.run("report", "--period", "2026-11-15", "--stdout")
+	if code != ExitOK {
+		t.Fatalf("report = %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "| brand terms status (question set) | proposed (not confirmed), confirmed |") {
+		t.Errorf("a mixed period must list both statuses:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "The brand terms are not confirmed yet (proposed).") {
+		t.Errorf("one proposed set is enough for the caution:\n%s", stdout)
+	}
+}
+
+// --check and --dry-run are probes: they validate the status and print it, and they
+// write neither the questions nor the question set (a question_sets row would make
+// the report state a status nothing was measured with).
+func TestQuestionsImportCheckWritesNeitherQuestionsNorTheQuestionSet(t *testing.T) {
+	h := newHarness(t)
+	path := writeQuestionSet(t, h, questionSetWithStatus("proposed"))
+	for _, flag := range []string{"--check", "--dry-run"} {
+		code, stdout, stderr := h.run("questions", "import", "--file", path, flag)
+		if code != ExitOK {
+			t.Fatalf("%s: exit = %d: %s", flag, code, stderr)
+		}
+		if !strings.Contains(stdout, "brand terms status: proposed") {
+			t.Errorf("%s: the validation output should carry the status:\n%s", flag, stdout)
+		}
+	}
+	counts := h.query("SELECT (SELECT COUNT(*) FROM questions) + (SELECT COUNT(*) FROM question_sets)")
+	defer counts.close()
+	if got := counts.int64(); got != 0 {
+		t.Fatalf("rows written by a probe = %d, want 0", got)
+	}
+}
+
+// A question set recorded before the status column existed keeps the empty value: the
+// record is append-only, so re-importing the same bytes cannot rewrite it. The import
+// says what the record holds instead of printing the file's value, and the report keeps
+// reading the record (D20).
+func TestReimportingARecordedSetReportsTheStoredStatus(t *testing.T) {
+	h := newHarness(t)
+	path := writeQuestionSet(t, h, questionSetWithStatus("confirmed"))
+	if code, stdout, stderr := h.run("questions", "import", "--file", path); code != ExitOK {
+		t.Fatalf("import = %d: %s\n%s", code, stderr, stdout)
+	} else if !strings.Contains(stdout, "brand terms status: confirmed") {
+		t.Errorf("a fresh import should print the recorded status:\n%s", stdout)
+	}
+
+	// Simulate a database written by v0.2.0: the row exists and the status column
+	// holds the migration default.
+	reset := h.query("UPDATE question_sets SET brand_terms_status = ''")
+	reset.exec()
+	reset.close()
+
+	code, stdout, stderr := h.run("questions", "import", "--file", path)
+	if code != ExitOK {
+		t.Fatalf("re-import = %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "question_set=skipped") {
+		t.Errorf("the same bytes must be skipped, not recorded twice:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "brand terms status: not declared") {
+		t.Errorf("the import must print the recorded value, not the file's:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "already recorded with brand terms status") {
+		t.Errorf("the disagreement must be a warning:\n%s", stderr)
+	}
+
+	if code, _, stderr := h.run("run", "--provider", "openai", "--repeat", "1", "--yes"); code != ExitOK {
+		t.Fatalf("run = %d: %s", code, stderr)
+	}
+	code, stdout, stderr = h.run("report", "--period", "2026-11-15", "--stdout")
+	if code != ExitOK {
+		t.Fatalf("report = %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "| brand terms status (question set) | not declared |") {
+		t.Errorf("the report must follow the record:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "| brand terms status (question set) | confirmed |") {
+		t.Errorf("the report must not repeat the file's value it never recorded:\n%s", stdout)
 	}
 }
 

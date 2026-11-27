@@ -124,6 +124,87 @@ func TestBuildListsTheConfiguredConditions(t *testing.T) {
 	}
 }
 
+// A mention rate rests on the chosen terms, so an unconfirmed term list is stated in
+// the conditions (the fact, read from the records) and next to the rate (what it means
+// for the number). A confirmed or undeclared list gets no caution: the rate means what
+// it always meant.
+func TestBuildShowsTheRecordedBrandTermsStatus(t *testing.T) {
+	cases := []struct {
+		name      string
+		statuses  []string
+		enRow     string
+		jaRow     string
+		enCaution bool
+		jaCaution bool
+	}{
+		{
+			name:      "proposed",
+			statuses:  []string{analysis.BrandTermsStatusProposed},
+			enRow:     "| brand terms status (question set) | proposed (not confirmed) |",
+			jaRow:     "| ブランド語の状態（質問セット） | 未確定（proposed） |",
+			enCaution: true,
+			jaCaution: true,
+		},
+		{
+			name:     "confirmed",
+			statuses: []string{analysis.BrandTermsStatusConfirmed},
+			enRow:    "| brand terms status (question set) | confirmed |",
+			jaRow:    "| ブランド語の状態（質問セット） | 確定済み |",
+		},
+		{
+			name:     "not declared is never shown as confirmed",
+			statuses: []string{analysis.BrandTermsNotDeclared},
+			enRow:    "| brand terms status (question set) | not declared |",
+			jaRow:    "| ブランド語の状態（質問セット） | 未宣言 |",
+		},
+		{
+			name:      "a mixed period lists both and keeps the caution",
+			statuses:  []string{analysis.BrandTermsStatusProposed, analysis.BrandTermsStatusConfirmed},
+			enRow:     "| brand terms status (question set) | proposed (not confirmed), confirmed |",
+			jaRow:     "| ブランド語の状態（質問セット） | 未確定（proposed）, 確定済み |",
+			enCaution: true,
+			jaCaution: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := sampleResult(t)
+			result.Conditions.BrandTermsStatuses = tc.statuses
+			en := Build(result, Options{Language: i18n.EN, GeneratedAt: "2026-11-15T00:00:00Z"})
+			ja := Build(result, Options{Language: i18n.JA, GeneratedAt: "2026-11-15T00:00:00Z"})
+			if !strings.Contains(en, tc.enRow) {
+				t.Errorf("English report is missing %q:\n%s", tc.enRow, en)
+			}
+			if !strings.Contains(ja, tc.jaRow) {
+				t.Errorf("Japanese report is missing %q:\n%s", tc.jaRow, ja)
+			}
+			// The status line must say where it came from, so a reader does not take it
+			// for a property of the configured brand terms.
+			if !strings.Contains(en, "The status is what the imported question set declared") {
+				t.Errorf("the status line must explain its provenance:\n%s", en)
+			}
+			if got := strings.Contains(en, "not confirmed yet"); got != tc.enCaution {
+				t.Errorf("English caution shown = %v, want %v:\n%s", got, tc.enCaution, en)
+			}
+			if got := strings.Contains(ja, "ブランド語はまだ確定していない"); got != tc.jaCaution {
+				t.Errorf("Japanese caution shown = %v, want %v:\n%s", got, tc.jaCaution, ja)
+			}
+		})
+	}
+}
+
+// A period with no runs has no recorded status, so the report must not print one: the
+// conditions table keeps saying "not measured" and nothing claims a term list at all.
+func TestBuildOmitsTheBrandTermsStatusWhenThePeriodHasNoRuns(t *testing.T) {
+	empty := &analysis.Result{Period: analysis.Period{Label: "2026-11-13:2026-11-13"}}
+	for _, lang := range []i18n.Lang{i18n.EN, i18n.JA} {
+		markdown := Build(empty, Options{Language: lang, GeneratedAt: "2026-11-15T00:00:00Z"})
+		if strings.Contains(markdown, "brand terms status") || strings.Contains(markdown, "ブランド語の状態") {
+			t.Errorf("an empty period must not print a brand terms status (%s):\n%s", lang, markdown)
+		}
+	}
+}
+
 // zeroRate matches a "0.0%" that is not part of 100.0%.
 var zeroRate = regexp.MustCompile(`(^|[^0-9])0\.0%`)
 
