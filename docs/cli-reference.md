@@ -215,11 +215,11 @@ aicm version [--json]
 
 Prints the build, the normaliser version, the supported providers (`openai`,
 `gemini`, `anthropic`, `perplexity`, `grok`) and their endpoint versions, and
-says which providers were observed against the live API and which were not:
+says which model and date were observed live for each provider:
 
 ```
 providers: openai (responses/v1+web_search), gemini (generateContent/v1beta+google_search), anthropic (messages/v1+web_search_20250305+api_2026-10-21), perplexity (agent/v1+web_search), grok (responses/v1+web_search+xai)
-live API: observed once: openai: gpt-6.1-sol, 2026-11-15; gemini: gemini-3.1-pro-preview, 2026-11-15; anthropic: claude-sonnet-5-5, 2026-11-15 — implemented but NOT observed: perplexity, grok
+live API: observed once per provider (openai: gpt-6.1-sol, 2026-11-15; gemini: gemini-3.1-pro-preview, 2026-11-15; anthropic: claude-sonnet-5-5, 2026-11-15; perplexity: openai/gpt-5.6-sol, 2026-11-28; grok: grok-4.7, 2026-11-28)
 tests:    never call a provider; CI uses fixtures and httptest only
 ```
 

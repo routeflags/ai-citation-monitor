@@ -943,16 +943,16 @@ func TestVersionListsTheProvidersAndVersions(t *testing.T) {
 			t.Errorf("version output does not contain %q:\n%s", want, stdout)
 		}
 	}
-	if !strings.Contains(stdout, "observed once") {
-		t.Errorf("the version output must state what was observed live and what was not:\n%s", stdout)
+	if !strings.Contains(stdout, "observed once per provider") {
+		t.Errorf("the version output must state what was observed live:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "NOT observed: perplexity, grok") {
-		t.Errorf("the version output must name the providers that were never called live:\n%s", stdout)
-	}
-	for _, line := range strings.Split(stdout, "\n") {
-		if strings.HasPrefix(line, "live API:") && (strings.Contains(line, "perplexity:") || strings.Contains(line, "grok:")) {
-			t.Errorf("the live observation line claims an unobserved provider: %q", line)
+	for _, want := range []string{"perplexity: openai/gpt-5.6-sol, 2026-11-28", "grok: grok-4.7, 2026-11-28"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("the version output must carry the live observation %q:\n%s", want, stdout)
 		}
+	}
+	if strings.Contains(stdout, "NOT observed") {
+		t.Errorf("every provider has been observed once, so nothing should be listed as not observed:\n%s", stdout)
 	}
 	if !strings.Contains(stdout, "never call a provider") {
 		t.Errorf("the version output must say the tests stay offline:\n%s", stdout)

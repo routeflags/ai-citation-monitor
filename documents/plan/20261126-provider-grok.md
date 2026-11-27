@@ -8,6 +8,9 @@
 | 制約 | 実 API を叩かない／鍵を読まない／`providers.LiveObservation` に `grok` を足さない／既存 3 プロバイダーの挙動と記録形式を変えない／`NormalizerVersion` を変えない／費用機能を足さない（D11 維持）／Perplexity 側の成果物に触れない |
 | 記録先 | 決定記録 D18（`documents/decisions/20261126-provider-grok.md`）。D17 は Perplexity が使用 |
 
+> 2026-11-28 の実 API 観測で、`annotations` が位置 span を持たないことを確認し、span の無い注釈は
+> 引用に数えない規則に変更した。詳細は決定記録 D18 の付記を参照（本計画は実装時点の記録）。
+
 BDD（振る舞い単位）で分解する。各タスクは「入力 → 期待する振る舞い」と異常系を持ち、実装層ごと
 にシナリオを整理する。参照した既存実装は `internal/providers/anthropic`（最も近い形：1 往復・
 サーバーサイド検索・注釈ベースの引用・注入クロック・エラー封筒の先読み）と

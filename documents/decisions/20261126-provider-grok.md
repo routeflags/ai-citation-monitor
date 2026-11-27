@@ -6,11 +6,11 @@
 | 前提 | `20261115-phase1-decisions.md` の D1–D11、`20261115-phase1-decisions-2.md` の D12–D16 を維持する。本記録は追加分のみ |
 | 入力 | オーナー依頼「Grok（xAI） Responses API への対応」 |
 | 計画書 | `documents/plan/20261126-provider-grok.md` |
-| 状態 | **実装済み・実 API 未検証**（鍵を読まず、実呼び出しもしない。テストは fixture と `httptest` のみ） |
+| 状態 | **実装済み・2026-11-28 に 1 回観測**（下記付記）。テストは fixture と `httptest` のみで、CI は実 API を呼ばない |
 
 ---
 
-## D18. Grok (xAI) プロバイダーの追加【未検証で公開】
+## D18. Grok (xAI) プロバイダーの追加【2026-11-28 に 1 回観測】
 
 ### 確認した公式仕様（2026-11-26）
 
@@ -36,7 +36,7 @@
 |---|---|---|
 | provider id | `grok` | ユーザーが選ぶ名前。`xai` は API 面の名前として endpoint version に焼き込む |
 | `api_endpoint_version` | `responses/v1+web_search+xai` | OpenAI の `responses/v1+web_search` と同じ文字列にしない。`provider` 列でも区別できるが、export やドキュメントで紛らわしいため xAI を焼き込む |
-| 引用の正 | `output[].content[].annotations[]` の `url_citation` **のみ**（`url` が空でないもの） | トップレベル `citations` は「検索中に見た URL」で、回答が使った根拠ではない（公式明記）。候補を引用に数えると、モデルが採用しなかったページで引用率が膨らむ。Anthropic の `web_search_tool_result` と同じ規則。Responses 本文にそもそも載らない可能性もあるため、**アダプターは `citations` をデコードすらしない**（載っても引用にならない） |
+| 引用の正 | `output[].content[].annotations[]` の `url_citation` で、**空でない span を持つものだけ**（`url` が空でないもの） | トップレベル `citations` は「検索中に見た URL」で、回答が使った根拠ではない（公式明記）。さらに 2026-11-28 の live 応答は 96 件の `url_citation` をすべて `start_index = end_index = 0` で返し、本文に `[N]` マーカーが無かった。span の無い注釈は「検索が見た source」であり「回答が付けた引用」ではないので数えない。span があるものだけが本文中の位置を持つ引用。
 | 本文中のインラインリンク | パースしない | 不変条件 4「引用はプロバイダーのメタデータからのみ」。`[[N]](url)` は本文の文字列であってメタデータではない |
 | observability | `annotations` フィールドが存在する（空配列含む）**または** `web_search_call` アイテムが存在する → `observed`。どちらも無い → `unknown` | 「メタデータが無い」と「引用ゼロ」を混ぜない既存の不変条件。トップレベル `citations[]` の有無だけでは observed にしない（それは回答の引用メタデータではない） |
 | `message` アイテムが無い | `unknown` | OpenAI アダプターと同じ規則。本文が無い応答に引用メタデータは無い |
@@ -48,7 +48,7 @@
 | `tool_calls` | `usage.server_side_tool_usage_details.web_search_calls` → 無ければ可視の `web_search_call` アイテムを数える。**`num_server_side_tools_used` も `num_sources_used` も使わない** | 「返る集計値があればそれを、無ければ見えているものを数える」（Anthropic / OpenAI と同じ方針）。前者は全サーバーツールの合計、後者は検索が見た source 数で、どちらも web search の回数でも引用数でもない |
 | エラー封筒 | 入れ子（`{"error":{"code","type","message"}}`、OpenAI 互換）とフラット（`{"code":..., "error":"message"}`）の**両受け**。どちらでもない → `http_<status>` + 本文先頭 | 公式にスキーマが無いため、片方に賭けない。成功本文の `error` オブジェクトもスキーマ未定義なので同じデコーダで読む。401/403 はリトライしない（`httpclient` の既存方針） |
 | 費用 | 計算しない（D11 維持）。`usage.cost_in_nano_usd` / `cost_in_usd_ticks` は**読まない**（列も無い） | xAI はコストを返すが、費用機能を持たないのが決定（D11）。provider が返す値でも「測定値」として保存する対象ではない |
-| live 観測 | `providers.LiveObservation` に `grok` を**足さない** | 実 API を観測していない。「観測済み」と誤読させない |
+| live 観測 | `providers.LiveObservation` に `grok` を追加（`grok-4.7, 2026-11-28`） | 2026-11-28 に 1 モデル・1 質問で実 API を観測した。1 回の観測であり、対応モデル一覧ではない |
 
 ### 却下した案
 
@@ -65,13 +65,14 @@
 
 ### 未検証・制限
 
-- **実 API は未検証**。`XAI_API_KEY` を読まず、実呼び出しもしない。fixture は公式ドキュメントの
-  レスポンス例を写したもの。
+- **実 API は 2026-11-28 に 1 回観測済み**（`grok-4.7`、1 質問）。fixture は公式ドキュメントの
+  レスポンス例を写したもので、実 API のダンプはコミットしていない。
 - **エラー封筒の実形は不明**。2 形態の両受けで緩和しているが、第 3 の形は `http_<status>` に落ちる
   （メッセージに本文先頭は残る）。
-- `annotations` が既定で「回答が使った根拠」を指すという前提は、Citations ページの記述
-  （インライン引用が有効なら位置参照付き）に依拠している。xAI が既定を変えた場合は
-  `api_endpoint_version` を上げる。
+- `annotations` が「回答が使った根拠」を指すという前提は、Citations ページの記述
+  （インライン引用が有効なら位置参照付き）に依拠している。**live 観測では位置参照が
+  付かなかった**ため、span の無い注釈は引用に数えない規則を追加した（付記参照）。
+  xAI が既定を変えた場合は `api_endpoint_version` を上げる。
 - `title` は引用番号（"1"）でページ題名ではない（nullable なので空文字もありうる）。`Result.Citations`
   には渡すが、`citations` テーブルに title 列は無いので**保存されない**（生 JSON の中だけに残る）。
   ダウンストリーム（`cited_own` / 競合判定）は URL のみを使うため影響しない。
@@ -83,3 +84,24 @@
 - **スキーマ変更は不要**（`runs.provider` に CHECK 制約は無く、新しい値はそのまま入る）。
   migration を足さないこと。
 - マルチターン（`previous_response_id`）と `max_turns` は扱わない。1 呼び出し 1 往復の原則。
+
+---
+
+## 付記: 2026-11-28 の実 API 観測
+
+| 項目 | 観測結果 |
+|---|---|
+| モデル | `grok-4.7` |
+| 質問 | 1 問（smoke、`What is Example Shop?`） |
+| HTTP / status | 200 / `completed` |
+| 引用メタデータ | `message` の `content[0].annotations` に 96 件。すべて `type="url_citation"`、`start_index = end_index = 0`。本文中の `[[N]](url)` は 0 個 |
+| トップレベル `citations` | フィールド自体が無かった |
+| usage | input 355,096 / output 1,999 / total 357,095、`server_side_tool_usage_details.web_search_calls = 16` |
+| 記録（修正後） | `citation_observability=observed`、`citation_count=0`、`tool_calls=16` |
+
+この観測で、**`annotations` が存在するだけでは「回答が引用した」と言えない**ことが分かった。
+位置 span を持つ注釈だけを引用とし、`0..0` の注釈は `observed / 0 件` として扱う。96 件を
+そのまま数えると、引用マーカーの無い回答で引用率が跳ね上がる（修正前の実装は 91 件と記録した）。
+fixture には span 付き（cited）と span なし（observed / 0）の両方を置いた。
+
+観測は 1 モデル・1 質問であり、対応モデル一覧でも、すべての回答が同じ形になるという主張でもない。

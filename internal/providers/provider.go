@@ -94,9 +94,11 @@ type Provider interface {
 // and date. It is a fact about this build, not a test: CI never calls a provider,
 // and one observed model is not a supported-model list.
 var LiveObservation = map[string]string{
-	"openai":    "gpt-6.1-sol, 2026-11-15",
-	"gemini":    "gemini-3.1-pro-preview, 2026-11-15",
-	"anthropic": "claude-sonnet-5-5, 2026-11-15",
+	"openai":     "gpt-6.1-sol, 2026-11-15",
+	"gemini":     "gemini-3.1-pro-preview, 2026-11-15",
+	"anthropic":  "claude-sonnet-5-5, 2026-11-15",
+	"perplexity": "openai/gpt-5.6-sol, 2026-11-28",
+	"grok":       "grok-4.7, 2026-11-28",
 }
 
 // HasCitationReports reports whether the response carried citation metadata at

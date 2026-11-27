@@ -6,12 +6,12 @@
 | 前提 | `20261115-phase1-decisions.md`（D1–D11）と `20261115-phase1-decisions-2.md`（D12–D16）を維持する。本記録は追加分のみ |
 | 入力 | オーナー依頼「Perplexity — Agent API」（Grok/xAI は別スレッド） |
 | 計画書 | `documents/plan/20261126-provider-perplexity.md` |
-| 状態 | **実装済み・実 API 未検証**（fixture と `httptest` のみ。`LiveObservation` には追加していない） |
+| 状態 | **実装済み・2026-11-28 に 1 回観測**（下記付記）。テストは fixture と `httptest` のみ |
 | 範囲 | Perplexity のみ（Grok/xAI は別スレッド）。**D18 は本記録では使わない** |
 
 ---
 
-## D17. Perplexity Agent API プロバイダーの追加【未検証で公開】
+## D17. Perplexity Agent API プロバイダーの追加【2026-11-28 に 1 回観測】
 
 ### 確認した公式仕様（確認日 2026-11-26）
 
@@ -44,7 +44,7 @@
 | 費用 | 計算しない。`cost` / `cost_usd` は読まない、記録もしない | D11 維持 |
 | マルチプロバイダー性 | `docs/providers.md` に「`provider` 列は API 面を指し、モデル名が他社を指しても別プロバイダー扱いにしない」と 1 段落明記 | 記録の意味を読み違えると、モデル別の比較を provider 別と誤解する |
 
-### 検証（実 API は呼ばない）
+### 検証（fixture と、2026-11-28 の 1 回の live 観測）
 
 - `internal/providers/perplexity` の単体テスト: cited（annotations と search_results の併合・重複排除）/ search-results-only / annotations-only / not-cited（空 results）/ no metadata / empty / 401 / 403（鍵 redact）/ 429→200 / 非 JSON / 500+HTML / `status` 5 種 / usage の欠落。
 - `internal/cli` のハーネス: `--provider perplexity` で `/agent` のみが呼ばれ、`runs.provider`・`api_endpoint_version`・`cited_own`・`citation_count` が期待どおり。`openai,perplexity` の同時実行も確認。
@@ -52,18 +52,28 @@
 
 ### 未検証・制限
 
-- 実 API 未観測。`providers.LiveObservation` に追加していない。`aicm version` と `docs/providers.md` が「未観測」を明示する。
-- `search_results` が実運用で常に返るかは未検証。返らない場合（検索せずに答えた場合を含む）は `unknown` になり、0 件扱いにはしない。実 API 観測時に確認する。
-- `annotations` は任意。付かない場合でも `search_results` から引用を取る。
+- 実 API は 2026-11-28 に 1 回観測済み（`openai/gpt-5.6-sol`、1 質問）。`providers.LiveObservation` に追加した。
+- `search_results` が実運用で常に返るかは、1 回の観測では分からない（2026-11-28 の 1 回は 15 件返った）。返らない場合は `unknown`（0 件ではない）。`annotations` は任意で、付かなくても `search_results` から引用を取る。
 - 401/429 のエラー本文形は未明記。封筒が読めなければ `http_<status>` に落とす。
 - トップレベル `results[]` は OpenAPI の応答スキーマに無い（クイックスタートの例には現れる）。現れても読まない。
 - `queued` / `in_progress` は本ツールがポーリングしないため常に失敗記録になる（非同期実行はしない）。
 
 ---
 
-## 付記. `LiveObservation` を増やさない理由（再確認）
+## 付記: 2026-11-28 の実 API 観測
 
-`providers.LiveObservation` は「このビルドが実際に 1 回観測した事実」の記録で、テストの
-主張ではない（D12 と同じ）。今回は実 API を 1 回も呼んでいないので、Perplexity を
-追加**しない**。代わりに `aicm version` と `docs/providers.md` が「未観測のプロバイダー」を
-明示し、新アダプターを観測済みと誤読させないようにした。
+| 項目 | 観測結果 |
+|---|---|
+| モデル | `openai/gpt-5.6-sol` |
+| 質問 | 1 問（smoke、`What is Example Shop?`） |
+| HTTP / status | 200 / `completed` |
+| 引用メタデータ | `search_results` 15 件。`message` の `annotations` は空配列（0 件） |
+| usage | input 4,321 / output 151 / total 4,472、`tool_calls_details.search_web.invocation = 1` |
+| 記録 | `citation_observability=observed`、`citation_count=15`、`tool_calls=1` |
+
+`annotations` だけを読む実装なら 0 件になっていた。`search_results` を引用の正とする
+現在の規則で 15 件を記録できた。費用は記録しない（D11）。
+
+`providers.LiveObservation` は「このビルドが実際に 1 回観測した事実」の記録なので、
+観測後に `perplexity` を追加した（`openai/gpt-5.6-sol, 2026-11-28`）。1 モデル・1 質問の
+観測であり、対応モデル一覧ではない。

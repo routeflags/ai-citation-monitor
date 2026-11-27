@@ -224,6 +224,27 @@ func TestAskDoesNotCountTheTopLevelCitationsArray(t *testing.T) {
 	}
 }
 
+func TestAskUnpositionedAnnotationsAreObservedZero(t *testing.T) {
+	// A live grok-4.7 answer (2026-11-28) returned 96 url_citation annotations
+	// whose spans were all 0..0, with no inline markers in the text. They are the
+	// sources the search saw, not citations the answer made.
+	body := `{"status":"completed","output":[{"type":"web_search_call","id":"ws_1","status":"completed"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer without markers","annotations":[{"type":"url_citation","url":"https://example.com/a","title":"https://example.com/a","start_index":0,"end_index":0},{"type":"url_citation","url":"https://example.com/b","title":"https://example.com/b","start_index":0,"end_index":0}]}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(body))
+	})
+	result := ask(t, newTestClient(t, handler))
+	if result.Status != providers.StatusSuccess {
+		t.Fatalf("status = %s (%s)", result.Status, result.ErrorCode)
+	}
+	if len(result.Citations) != 0 {
+		t.Fatalf("citations = %d, want 0: a 0..0 span has no position in the answer", len(result.Citations))
+	}
+	if result.Observability != providers.ObservabilityObserved {
+		t.Errorf("observability = %s, want observed", result.Observability)
+	}
+}
+
 func TestAskRecordsProviderError(t *testing.T) {
 	// Retrying an authentication failure only burns quota: the shared client
 	// retries 429/5xx and transport errors, and the adapter must not add its own.

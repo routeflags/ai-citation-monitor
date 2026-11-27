@@ -4,15 +4,13 @@ The tool speaks to the provider APIs directly with `net/http`. No SDK is used, s
 the request shape and the API version are visible in the code and are recorded in
 every measurement.
 
-> **Live API status: observed once for OpenAI, Gemini and Anthropic; Perplexity and
-> Grok are implemented but NOT observed** (2026-11-15 / 2026-11-26). OpenAI
-> `gpt-6.1-sol`, Gemini `gemini-3.1-pro-preview` and Anthropic `claude-sonnet-5-5`
-> have been run against the real service with one question and one model, and the
-> citation/usage extraction matched. The Perplexity and Grok adapters have never
-> been called against the real API: they are tested with `httptest` and fixtures
-> copied from the published response shapes (`aicm version` names them under
-> `live_not_observed`). One observation is not a supported-model list either: CI
-> never calls a provider.
+> **Live API status: observed once per provider** (2026-11-15 / 2026-11-28).
+> OpenAI `gpt-6.1-sol`, Gemini `gemini-3.1-pro-preview`, Anthropic
+> `claude-sonnet-5-5`, Perplexity `openai/gpt-5.6-sol` and xAI `grok-4.7` have
+> each been run against the real service with one question and one model, and the
+> citation/usage extraction matched. One observation is not a supported-model
+> list: CI never calls a provider, and the tests serve documented response shapes
+> from `httptest`.
 
 ## OpenAI
 
@@ -118,7 +116,7 @@ Notes:
 | Observability | `observed` when a content part carries an `annotations` field (even an empty array) or the response carries a `search_results` item; `unknown` when it carries neither |
 | Usage | `usage.input_tokens`, `usage.output_tokens`, `usage.total_tokens`; tool calls from `usage.tool_calls_details.search_web.invocation`, else counted from the `search_results` items |
 | Recorded endpoint version | `agent/v1+web_search` |
-| Live status | implemented, never called against the real API (fixtures only) |
+| Live status | observed once (`openai/gpt-5.6-sol`, 2026-11-28): 15 `search_results`, `annotations: []`; otherwise tested with fixtures |
 
 Notes:
 
@@ -155,7 +153,7 @@ Notes:
 | Auth | `Authorization: Bearer $XAI_API_KEY` (`api_key_env` in the config names the variable) |
 | Search | request body `tools: [{"type": "web_search"}]` |
 | Answer text | the `output_text` content of the `message` items, joined |
-| Citations | `output[].content[].annotations[]` where `type = "url_citation"` (`url`, `title`, `start_index`, `end_index`) |
+| Citations | `output[].content[].annotations[]` where `type = "url_citation"` **and the span is non-empty** (`url`, `title`, `start_index`, `end_index`); a 0..0 span is a source the search saw, not an attribution |
 | Observability | `observed` when any `annotations` field is present (even an empty array) or a `web_search_call` item exists; `unknown` when neither does |
 | Usage | `usage.input_tokens`, `usage.output_tokens`, `usage.total_tokens`; tool calls from `usage.server_side_tool_usage_details.web_search_calls`, or counted from the `web_search_call` items when that block is missing |
 | Recorded endpoint version | `responses/v1+web_search+xai` |
@@ -166,10 +164,14 @@ Notes:
   documents a `citations` list on a search-enabled response as every URL the
   search *encountered*, and says the agent may look at a source and still not use
   it; the Responses response schema does not even declare the field. Either way it
-  is not read: only the `url_citation` annotations — the `[[N]](url)` references
-  the answer itself carries, with character offsets — are counted, and a candidate
-  list never makes a response `observed`. A URL that merely appears inside the
-  answer text is not a citation either.
+  is not read. Only a `url_citation` annotation with a non-empty span is counted:
+  the span is the position in the answer, and a zero-length span is not an
+  attribution. A candidate list never makes a response `observed` on its own.
+- **A live answer returned unpositioned annotations.** On 2026-11-28 a
+  `grok-4.7` answer carried 96 `url_citation` annotations, all with
+  `start_index = end_index = 0`, and no `[[N]](url)` markers in the text. They are
+  the sources the search saw, so the run is `observed` with zero citations, not
+  96. A citation is only recorded when the answer placed it at a span.
 - **Inline citations are left at the API default.** The request sends no
   `include`. `include: ["no_inline_citations"]` would remove the positional links
   and leave the annotations as a list of encountered sources without a position in
@@ -182,8 +184,9 @@ Notes:
   yours is decided from the URL.
 - **A search that cites nothing is an observed zero.** `annotations: []` next to a
   `web_search_call` item means the provider reported citation metadata and the
-  answer attributed none of its sources. Absent annotation metadata *and* no search
-  item is `unknown`.
+  answer attributed none of its sources. A set of annotations with no span
+  (`0..0`) is the same observation: `observed`, zero attributed citations. Absent
+  annotation metadata *and* no search item is `unknown`.
 - **Only `completed` is a success.** `incomplete` takes its `error_code` from
   `incomplete_details.reason` (`max_output_tokens`, `max_prompt_tokens`,
   `max_time_limit`, `content_filter`), `in_progress` is not a final response, and
@@ -199,9 +202,10 @@ Notes:
 - **The answer text is stored verbatim**, inline-citation markup and all. The
   `[[N]](url)` links are part of what the model wrote, and rewriting them would
   change `answer_sha256` and make `aicm verify` report an edited answer.
-- **Live API status: not observed.** No call from this build has reached
-  `api.x.ai`; everything above comes from the published documentation
-  (2026-11-26) and from fixtures modelled on it.
+- **Live API status: observed once** (2026-11-28, `grok-4.7`). The call returned a
+  completed answer, 16 `web_search_call` items and the usage totals reported by
+  the API; its annotations were unpositioned, as described above. That is one
+  observation, not a supported-model list.
 
 ## Rules that apply to all of them
 

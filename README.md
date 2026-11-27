@@ -194,8 +194,8 @@ Global `--json` mode keeps stdout machine-readable and sends diagnostics to stde
 | OpenAI | Responses API + `web_search` | One live single-question observation on **2026-11-15**; offline fixture tests |
 | Google Gemini | `generateContent` + `google_search` | One live single-question observation on **2026-11-15**; offline fixture tests |
 | Anthropic Claude | Messages API + `web_search_20250305` | One live single-question observation on **2026-11-15**; offline fixture tests |
-| Perplexity | Agent API + `web_search` | **Implemented, no live call yet**: offline fixture tests only |
-| xAI Grok | Responses API + `web_search` | **Not verified against the live API**: implemented, offline fixture tests only |
+| Perplexity | Agent API + `web_search` | One live single-question observation on **2026-11-28**; offline fixture tests |
+| xAI Grok | Responses API + `web_search` | One live single-question observation on **2026-11-28**; offline fixture tests |
 
 These observations verify specific response shapes, **not universal model support or a completed production measurement**. A full live question-set study has not been performed. Tests also cover citation extraction, retry behavior, rate limits, concurrent calls, and interruption/resume behavior. See [provider details](docs/providers.md).
 

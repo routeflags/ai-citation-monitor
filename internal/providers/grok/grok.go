@@ -10,11 +10,13 @@
 //	 "tools": [{"type": "web_search"}]}
 //
 // Citations come only from the message content annotations of type
-// `url_citation` (url / title / start_index / end_index). The top-level
-// `citations` array is "every URL the search saw", which the citations page
-// states is not necessarily what the answer attributed its text to, so it is
-// not counted: appearing in the search results is not being cited. A
-// `[[1]](url)` markdown link inside the answer text is not a citation either.
+// `url_citation` that carry a non-empty span in the answer text. An annotation
+// whose span is 0..0 (or missing) has no position in the answer: on 2026-11-28 a
+// live grok-4.7 answer returned 96 such annotations next to a message with no
+// inline markers, so they are the sources the search saw, not citations the
+// answer made, and they are not counted. The top-level `citations` array is the
+// same kind of encountered-source list and is not read either. A `[[1]](url)`
+// markdown link inside the answer text is not parsed.
 //
 // The request does not send `include`. Inline citations are on by default for
 // the Responses API; asking for `no_inline_citations` would leave the
@@ -406,10 +408,13 @@ func (p *responsePayload) refusal() string {
 }
 
 // citations returns the cited URLs and whether the response carried citation
-// metadata at all. An annotations array that is present but empty is "observed,
-// zero citations"; a response with no annotations field and no search item is
-// "unknown". The top-level citations array is not metadata about the answer, so
-// it does not make a response observed.
+// metadata at all. Only a `url_citation` with a non-empty span is a citation: a
+// 0..0 or absent span marks a source the search saw, not something the answer
+// attributed (live grok-4.7 returns those). An annotations array that is present
+// but empty or unpositioned is "observed, zero citations"; a response with no
+// annotations field and no search item is "unknown". The top-level citations
+// array is not metadata about the answer, so it does not make a response
+// observed.
 func (p *responsePayload) citations() ([]providers.Citation, string) {
 	citations := make([]providers.Citation, 0, 4)
 	sawMetadata := false
@@ -430,6 +435,12 @@ func (p *responsePayload) citations() ([]providers.Citation, string) {
 			sawMetadata = true
 			for _, annotation := range *content.Annotations {
 				if annotation.Type != WebCitationType || annotation.URL == "" {
+					continue
+				}
+				if annotation.StartIndex == nil || annotation.EndIndex == nil ||
+					*annotation.EndIndex <= *annotation.StartIndex {
+					// No span means no position in the answer: this is a source the
+					// search saw, not a citation the answer made.
 					continue
 				}
 				citations = append(citations, providers.Citation{
