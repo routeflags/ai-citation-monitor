@@ -59,6 +59,13 @@ go test -race ./...   # on Linux
 `make check` runs the same list (plus `golangci-lint` and `govulncheck`) in one
 command; `make tools` installs the pinned versions of both.
 
+`make proof` checks the arithmetic of the report against the Lean proofs in `proofs/`,
+and checks that the model and `NewRate` reproduce the same `proofs/rate-vectors.csv`.
+It needs Lean 4, installed once with elan
+(`curl -sSf https://elan.lean-lang.org/elan-init.sh | sh -s -- -y`).
+`proofs/lean-toolchain` pins the version. The tool, the test suite and the release build
+never need it, so `proof` is not part of `make check`.
+
 - No test may call a real provider. Adapters are tested with `httptest` and
   fixtures that copy the shape of captured responses.
 - If you add a provider, add fixtures for: cited, not cited, provider error, empty

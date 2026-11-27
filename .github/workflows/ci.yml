@@ -48,6 +48,21 @@ jobs:
         if: runner.os == 'Linux'
         run: go test -race ./...
 
+  # Separate from the test job because it needs a toolchain the tool itself never uses.
+  # proofs/lean-toolchain pins the Lean version, so the job downloads the same one a
+  # developer gets from elan.
+  proof:
+    name: proof (Lean)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Lean
+        run: |
+          curl -sSf https://elan.lean-lang.org/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Check the proofs and the rate vectors
+        run: ./proofs/check.sh
+
   lint:
     name: golangci-lint
     runs-on: ubuntu-latest

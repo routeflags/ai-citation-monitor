@@ -74,6 +74,12 @@ When a period mixes sets with different statuses, every status is listed
 ## Formatting rules
 
 - A rate is written as the percentage with its denominator: `40.0% (n=2/5)`.
+- **The percentage is rounded to one decimal, and an exact halfway value goes to the
+  even tenth**: `1/16` prints `6.2%`, never `6.3%`. Where `float64` cannot hold the
+  halfway value itself, the tool rounds the float it has, so `1/2000` prints `0.1%`
+  although exact rounding gives `0.0%`. A column of shares is therefore not required to
+  add up to exactly `100.0%`; it stays within half a tenth per row
+  (`proofs/Rate.lean`, `share_column_bound`).
 - `n = 0` is written as `— (not measured)` (Japanese: `—（未測定）`) and the JSON
   `value` is `null`. It is never `0.0%`.
 - A difference between periods is in **percentage points** (`+12.5pt`), never a

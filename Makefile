@@ -20,7 +20,7 @@ GOVULNCHECK_VERSION ?= v1.9.0
 GORELEASER_VERSION ?= v2.20.2
 
 .PHONY: help build aicm install fmt fmt-check vet test test-race lint vuln check \
-	tools release-check snapshot clean
+       proof tools release-check snapshot clean
 
 help: ## List the targets below.
 	@printf 'Usage: make <target>\n\n'
@@ -58,6 +58,11 @@ vuln: ## Run govulncheck. Only reachable vulnerabilities fail.
 	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 check: fmt-check vet build test test-race lint vuln ## Run everything CI checks, in order.
+
+# Separate on purpose: checking the arithmetic in proofs/ needs a Lean toolchain, and
+# the tool itself must build and test without one.
+proof: ## Check the Lean proofs and the rate vectors (needs elan; not part of check).
+	@./proofs/check.sh
 
 tools: ## Install the pinned linters into $GOBIN.
 	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
