@@ -150,6 +150,12 @@ One row per group: citation rate and brand mention rate in both periods, the
 difference in percentage points, and a note when the numbers are not comparable
 (different conditions, different `n`, or one side unmeasured).
 
+The delta is the difference between the two rates the table prints, to the tenth:
+`81.2% - 20.0%` is `+61.2pt`, so subtracting the rows gives the delta column. In
+`--json` output, `cited_delta_text` / `brand_delta_text` are the value of record;
+`cited_delta` / `brand_delta` are the same tenth divided by ten, and carry no
+finer precision than the text.
+
 ## trends
 
 ```
@@ -160,7 +166,9 @@ One table per group. Buckets are JST. The first bucket says `— (no history)`.
 When a bucket's `n` differs from the previous bucket's, the delta is still printed
 but the row carries the same note `compare` uses (`n differs (2 vs 1)`), because the
 same percentage points over a different sample size are not the same comparison. A
-bucket with no measurement (`n = 0`) prints no delta at all.
+bucket with no measurement (`n = 0`) prints no delta at all. The delta has the same
+unit and precision as `compare`: tenths of a point, the difference between the two
+rates the table prints.
 
 ## competitors
 
