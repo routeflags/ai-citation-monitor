@@ -74,6 +74,12 @@ The tool owns the schema (`migrations/`), so a consumer repository only points
 migration 0001 uses `CREATE TABLE IF NOT EXISTS` so it can adopt a database that
 was created by an older build.
 
+**The schema is the public contract.** Columns for a particular consumer's local
+tool (for example that tool's version) are not added: evidence identity is
+`tool_version` plus `api_endpoint_version`, the question-set version/SHA and
+`plan_key`. A consumer that needs another shape converts an `aicm export`, not the
+stored rows (D19).
+
 | Table | Holds |
 |---|---|
 | `projects` | one site: `site_id`, `own_domain`, `subdomains`, `market`, `language` |
