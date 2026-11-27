@@ -74,12 +74,14 @@ When a period mixes sets with different statuses, every status is listed
 ## Formatting rules
 
 - A rate is written as the percentage with its denominator: `40.0% (n=2/5)`.
-- **The percentage is rounded to one decimal, and an exact halfway value goes to the
-  even tenth**: `1/16` prints `6.2%`, never `6.3%`. Where `float64` cannot hold the
-  halfway value itself, the tool rounds the float it has, so `1/2000` prints `0.1%`
-  although exact rounding gives `0.0%`. A column of shares is therefore not required to
-  add up to exactly `100.0%`; it stays within half a tenth per row
-  (`proofs/Rate.lean`, `share_column_bound`).
+- **The percentage is rounded from the ratio, not from a float**: one decimal, and an
+  exact halfway value goes to the even tenth. `1/16` prints `6.2%`, `23/80` prints
+  `28.8%`, `1/2000` prints `0.0%` — the same tenth on every machine and Go version
+  (`proofs/Rate.lean`, `tenths_spec`). A column of shares is therefore not required to
+  add up to exactly `100.0%`; it stays within half a tenth per row (`share_column_bound`).
+- **A difference between periods is in percentage points, and it is the difference
+  between the two rates the table prints**: `1/5 -> 6/32` prints `20.0% -> 18.8%`, so the
+  delta is `-1.2pt`. Subtracting the rows gives the delta column.
 - `n = 0` is written as `— (not measured)` (Japanese: `—（未測定）`) and the JSON
   `value` is `null`. It is never `0.0%`.
 - A difference between periods is in **percentage points** (`+12.5pt`), never a

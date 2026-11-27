@@ -11,16 +11,17 @@ check by hand:
     (`tenths_error`);
   * a share column adds up to `100%` within half a tenth per row
     (`share_column_bound`);
-  * a difference in percentage points composes (`delta_add`).
+  * a difference in percentage points is the difference of the two printed tenths, so it
+    composes (`delta_add`).
 
 The proof is about the definitions below. What ties them to the Go code is
 `rate-vectors.csv`: `lean --run Rate.lean` checks these definitions against every line
 of it, and `internal/analysis/vectors_test.go` checks `NewRate` against the same file.
 
-One case is documented rather than proved: a value that sits exactly halfway between
-two tenths goes to the even tenth, but `float64` cannot hold every halfway point
-(`1000/2000`), so the tool prints `0.1%` where the exact rule gives `0.0%`. See
-`docs/metrics.md`.
+The code used to round the `float64` it computed (`fmt.Sprintf("%.1f", 100*n/d)`), which
+printed the other tenth for 553 of the 4600 exact halfway values with `d <= 3000` — a
+result that depended on machine and Go version. D22 moved the code onto this rule, so
+the definitions below describe the Go code rather than a target for it.
 
 Run from this directory:
 
@@ -31,9 +32,8 @@ Run from this directory:
 namespace Aicm
 
 /-- `1000 * n / d` rounded to the nearest integer, an exact halfway value going to the
-even integer: the rule `fmt.Sprintf("%.1f", 100 * n / d)` applies. Kept literally as
-the Go code does it — quotient, remainder, then the tie — so the two can be compared
-line by line. -/
+even integer: the rule `internal/analysis.Tenths` applies. Kept literally as the Go code
+does it — quotient, remainder, then the tie — so the two can be compared line by line. -/
 def tenths (n d : Nat) : Nat :=
   let q := 1000 * n / d
   let r := 1000 * n % d
@@ -128,8 +128,9 @@ theorem tenths_error (n d : Nat) (hd : 0 < d) :
     simpa [Int.natCast_mul, Int.natCast_add, Int.mul_assoc] using h
   constructor <;> omega
 
-/-- A difference between two measurements is in percentage points: it composes, which
-is what lets a report compare `A -> C` with `A -> B -> C`, and it is antisymmetric. -/
+/-- A difference between two measurements is in percentage points, read off the tenths the
+report prints (`analysis.DeltaTenths` is `Tenths(b) - Tenths(a)`): it composes, which is
+what lets a report compare `A -> C` with `A -> B -> C`, and it is antisymmetric. -/
 def deltaTenths (before after : Int) : Int := after - before
 
 theorem delta_add (a b c : Int) : deltaTenths a c = deltaTenths a b + deltaTenths b c := by

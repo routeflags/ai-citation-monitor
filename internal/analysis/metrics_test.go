@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"math/big"
 	"testing"
 	"time"
 
@@ -44,6 +45,80 @@ func TestRateFormatsWithDenominator(t *testing.T) {
 	}
 	if got := rate.Display(i18n.EN); got != "40.0% (n=2/5)" {
 		t.Fatalf("display = %q", got)
+	}
+}
+
+// The printed percentage is rounded from the ratio, not from float64: the tenths must be
+// the same on every machine. Every case below is an exact halfway value except 5/8, and
+// 23/80 printed 28.7% before D22 because float64(23)/float64(80)*100 lands below 28.75.
+func TestRateRoundsTheRatioNotTheFloat(t *testing.T) {
+	for _, c := range []struct {
+		n, d int
+		want string
+	}{
+		{1, 16, "6.2%"},
+		{3, 16, "18.8%"},
+		{23, 80, "28.8%"},
+		{49, 80, "61.2%"},
+		{51, 80, "63.8%"},
+		{1, 2000, "0.0%"},
+		{5, 8, "62.5%"},
+	} {
+		if got := NewRate(c.n, c.d).Text; got != c.want {
+			t.Errorf("NewRate(%d, %d).Text = %q, want %q", c.n, c.d, got, c.want)
+		}
+	}
+}
+
+// Tenths is checked against exact rational arithmetic over every numerator up to 300, so a
+// change to the rounding has to hold for every input, not only for the vectors in
+// proofs/rate-vectors.csv.
+func TestTenthsMatchesExactRounding(t *testing.T) {
+	for d := 1; d <= 300; d++ {
+		for n := 0; n <= d; n++ {
+			want := exactTenths(n, d)
+			if got := Tenths(n, d); got != want {
+				t.Fatalf("Tenths(%d, %d) = %d, want %d", n, d, got, want)
+			}
+		}
+	}
+}
+
+// exactTenths rounds 1000*n/d with big.Rat: the same rule, computed a different way.
+func exactTenths(n, d int) int {
+	r := new(big.Rat).SetFrac64(int64(1000*n), int64(d))
+	q := new(big.Int)
+	rem := new(big.Int)
+	q.QuoRem(r.Num(), r.Denom(), rem)
+	k := q.Int64()
+	if twice := new(big.Int).Lsh(rem, 1); twice.Cmp(r.Denom()) > 0 ||
+		(twice.Cmp(r.Denom()) == 0 && k%2 != 0) {
+		k++
+	}
+	return int(k)
+}
+
+// A delta is the difference between the two numbers the table prints, so a reader who
+// subtracts the rows gets the delta column. 1/5 -> 6/32 prints 20.0% -> 18.8%, so the
+// delta is -1.2pt; rounding the exact difference gave -1.3pt before D22.
+func TestDeltaIsTheDifferenceOfThePrintedRates(t *testing.T) {
+	for _, c := range []struct {
+		an, ad, bn, bd int
+		want           string
+	}{
+		{1, 5, 6, 32, "-1.2pt"},
+		{1, 5, 13, 16, "+61.2pt"},
+		{2, 5, 1, 2, "+10.0pt"},
+		{1, 2, 1, 5, "-30.0pt"},
+	} {
+		a, b := NewRate(c.an, c.ad), NewRate(c.bn, c.bd)
+		if got := DeltaText(a, b, i18n.EN); got != c.want {
+			t.Errorf("DeltaText(%d/%d, %d/%d) = %q, want %q", c.an, c.ad, c.bn, c.bd, got, c.want)
+		}
+		wantValue := float64(Tenths(c.bn, c.bd)-Tenths(c.an, c.ad)) / 10
+		if got := Delta(a, b); got == nil || *got != wantValue {
+			t.Errorf("Delta(%d/%d, %d/%d) = %v, want %v", c.an, c.ad, c.bn, c.bd, got, wantValue)
+		}
 	}
 }
 

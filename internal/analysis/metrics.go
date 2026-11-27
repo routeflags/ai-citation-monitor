@@ -34,12 +34,42 @@ type Rate struct {
 const UnmeasuredMark = "\u2014"
 
 // NewRate builds a rate. d = 0 returns the unmeasured form with value null.
+//
+// Text comes from the integers, not from Value: rounding the float64 would make the
+// printed percentage depend on whether the exact ratio happens to be representable
+// (23/80 rounds down as a float64 and up as a ratio), so the same n and d could print
+// different tenths on different machines. proofs/Rate.lean states this rule and proves
+// the bounds around it; proofs/rate-vectors.csv pins the boundary cases.
 func NewRate(n, d int) Rate {
 	if d <= 0 {
 		return Rate{N: n, D: 0, Value: nil, Text: UnmeasuredMark}
 	}
 	value := float64(n) / float64(d)
-	return Rate{N: n, D: d, Value: &value, Text: fmt.Sprintf("%.1f%%", value*100)}
+	return Rate{N: n, D: d, Value: &value, Text: formatTenths(Tenths(n, d))}
+}
+
+// Tenths is the percentage of n / d in tenths of a percent: "20.0%" is 200.
+//
+// The value is rounded to the nearest tenth, and an exact halfway value goes to the even
+// tenth. n is a numerator — a count of runs or citations, so it is not negative — and d
+// is positive; NewRate is the only caller and it establishes both.
+func Tenths(n, d int) int {
+	q, r := 1000*n/d, 1000*n%d
+	switch {
+	case 2*r < d:
+		return q
+	case 2*r > d:
+		return q + 1
+	case q%2 == 0:
+		return q
+	default:
+		return q + 1
+	}
+}
+
+// formatTenths renders tenths of a percent as the report prints it: "20.0%".
+func formatTenths(tenths int) string {
+	return fmt.Sprintf("%d.%d%%", tenths/10, tenths%10)
 }
 
 // Measured reports whether the rate has a denominator.
@@ -53,22 +83,45 @@ func (r Rate) Display(lang i18n.Lang) string {
 	return fmt.Sprintf(lang.RateFormat(), r.Text, r.N, r.D)
 }
 
-// Delta returns the difference in percentage points, or nil when either side is
+// Delta is the difference b - a in percentage points, or nil when either side is
 // unmeasured (comparing against nothing is not a change).
+//
+// It is the same number DeltaText prints, so a JSON consumer and a reader of the table
+// see one value: `DeltaTenths` divided by ten, the tenths of a point in the table.
 func Delta(a, b Rate) *float64 {
-	if a.Value == nil || b.Value == nil {
+	tenths, ok := DeltaTenths(a, b)
+	if !ok {
 		return nil
 	}
-	delta := (*b.Value - *a.Value) * 100
+	delta := float64(tenths) / 10
 	return &delta
 }
 
-// DeltaText renders a delta in percentage points.
-func DeltaText(delta *float64, lang i18n.Lang) string {
-	if delta == nil {
+// DeltaTenths is the difference b - a in tenths of a percentage point: "+61.3pt" is 613.
+//
+// It is exactly `Tenths(b) - Tenths(a)`, the two numbers the table prints, so a reader who
+// subtracts the rows gets the same answer as the delta column. Rounding the exact
+// difference instead would disagree with the printed rates in either direction.
+// ok is false when either side is unmeasured.
+func DeltaTenths(a, b Rate) (int, bool) {
+	if a.Value == nil || b.Value == nil {
+		return 0, false
+	}
+	return Tenths(b.N, b.D) - Tenths(a.N, a.D), true
+}
+
+// DeltaText renders a delta in percentage points: "+61.3pt", or the unmeasured mark.
+func DeltaText(a, b Rate, lang i18n.Lang) string {
+	tenths, ok := DeltaTenths(a, b)
+	if !ok {
 		return lang.Unmeasured()
 	}
-	return fmt.Sprintf("%+.1fpt", *delta)
+	sign := "+"
+	if tenths < 0 {
+		sign = "-"
+		tenths = -tenths
+	}
+	return fmt.Sprintf("%s%d.%dpt", sign, tenths/10, tenths%10)
 }
 
 // QuestionRate is one question inside a group.

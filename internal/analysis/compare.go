@@ -128,9 +128,9 @@ func Compare(a, b *Result) []CompareRow {
 
 		row.Comparable = true
 		row.CitedDelta = Delta(row.CitedA, row.CitedB)
-		row.CitedDeltaText = DeltaText(row.CitedDelta, i18n.EN)
+		row.CitedDeltaText = DeltaText(row.CitedA, row.CitedB, i18n.EN)
 		row.BrandDelta = Delta(row.BrandA, row.BrandB)
-		row.BrandDeltaText = DeltaText(row.BrandDelta, i18n.EN)
+		row.BrandDeltaText = DeltaText(row.BrandA, row.BrandB, i18n.EN)
 		if row.CitedA.D != row.CitedB.D {
 			row.Reason = "n_differs"
 			row.Detail = itoa(row.CitedA.D) + " vs " + itoa(row.CitedB.D)

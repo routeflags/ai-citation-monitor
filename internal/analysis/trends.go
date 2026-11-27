@@ -160,9 +160,9 @@ func Trends(runs []sqlite.Run, interval string) ([]TrendSeries, error) {
 				point.BrandDeltaText = i18n.EN.HistoryShort()
 			} else {
 				point.CitedDelta = Delta(previous.CitedOwn, point.CitedOwn)
-				point.CitedDeltaText = DeltaText(point.CitedDelta, i18n.EN)
+				point.CitedDeltaText = DeltaText(previous.CitedOwn, point.CitedOwn, i18n.EN)
 				point.BrandDelta = Delta(previous.BrandMentioned, point.BrandMentioned)
-				point.BrandDeltaText = DeltaText(point.BrandDelta, i18n.EN)
+				point.BrandDeltaText = DeltaText(previous.BrandMentioned, point.BrandMentioned, i18n.EN)
 				if point.CitedDelta == nil {
 					point.Reason = "earlier_unmeasured"
 					point.Note = point.NoteFor(i18n.EN)
