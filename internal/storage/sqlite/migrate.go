@@ -60,35 +60,70 @@ func (d *DB) SQL() *sql.DB { return d.sql }
 // It is safe to run on a database created by an older build: migration 0001 is
 // written with IF NOT EXISTS so it can adopt an existing file.
 func (d *DB) Migrate() error {
+	if err := d.ensureMigrationsTable(); err != nil {
+		return err
+	}
+	applied, err := d.appliedMigrations()
+	if err != nil {
+		return err
+	}
+	files, err := migrationFiles()
+	if err != nil {
+		return err
+	}
+	for _, name := range files {
+		version, err := migrationVersion(name)
+		if err != nil {
+			return err
+		}
+		if applied[version] {
+			continue
+		}
+		if err := d.applyMigration(name, version); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensureMigrationsTable creates the bookkeeping table, which is the one object
+// Migrate owns rather than a migration.
+func (d *DB) ensureMigrationsTable() error {
 	if _, err := d.sql.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
 		version INTEGER PRIMARY KEY,
 		applied_at TEXT NOT NULL
 	)`); err != nil {
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}
+	return nil
+}
 
+// appliedMigrations reads the versions already recorded.
+func (d *DB) appliedMigrations() (map[int]bool, error) {
 	applied := map[int]bool{}
 	rows, err := d.sql.Query(`SELECT version FROM schema_migrations`)
 	if err != nil {
-		return fmt.Errorf("read schema_migrations: %w", err)
+		return nil, fmt.Errorf("read schema_migrations: %w", err)
 	}
+	defer rows.Close()
 	for rows.Next() {
 		var version int
 		if err := rows.Scan(&version); err != nil {
-			rows.Close()
-			return err
+			return nil, err
 		}
 		applied[version] = true
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
+		return nil, err
 	}
-	rows.Close()
+	return applied, nil
+}
 
+// migrationFiles lists the embedded migrations in the order they must be applied.
+func migrationFiles() ([]string, error) {
 	names, err := migrations.FS.ReadDir(".")
 	if err != nil {
-		return fmt.Errorf("read embedded migrations: %w", err)
+		return nil, fmt.Errorf("read embedded migrations: %w", err)
 	}
 	files := make([]string, 0, len(names))
 	for _, entry := range names {
@@ -98,37 +133,33 @@ func (d *DB) Migrate() error {
 		files = append(files, entry.Name())
 	}
 	sort.Strings(files)
+	return files, nil
+}
 
-	for _, name := range files {
-		version, err := migrationVersion(name)
-		if err != nil {
-			return err
-		}
-		if applied[version] {
-			continue
-		}
-		body, err := migrations.FS.ReadFile(name)
-		if err != nil {
-			return fmt.Errorf("read migration %s: %w", name, err)
-		}
-		tx, err := d.sql.Begin()
-		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(string(body)); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("apply migration %s: %w", name, err)
-		}
-		if _, err := tx.Exec(
-			`INSERT INTO schema_migrations (version, applied_at) VALUES (?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))`,
-			version,
-		); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("record migration %s: %w", name, err)
-		}
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("commit migration %s: %w", name, err)
-		}
+// applyMigration runs one file and records its version in the same transaction: a
+// migration is either applied and recorded, or not at all.
+func (d *DB) applyMigration(name string, version int) error {
+	body, err := migrations.FS.ReadFile(name)
+	if err != nil {
+		return fmt.Errorf("read migration %s: %w", name, err)
+	}
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(string(body)); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("apply migration %s: %w", name, err)
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO schema_migrations (version, applied_at) VALUES (?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))`,
+		version,
+	); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("record migration %s: %w", name, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit migration %s: %w", name, err)
 	}
 	return nil
 }

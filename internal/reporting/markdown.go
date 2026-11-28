@@ -48,7 +48,7 @@ func Build(result *analysis.Result, opts Options) string {
 
 	writeConditions(&b, text, result, opts)
 	writeObserved(&b, text, result)
-	writeDerived(&b, text, lang, result, opts)
+	writeDerived(&b, text, lang, result)
 	if opts.Compare != nil {
 		writeCompare(&b, text, lang, result, opts)
 	}
@@ -145,38 +145,51 @@ func writeObserved(b *strings.Builder, text labels, result *analysis.Result) {
 	b.WriteString("\n")
 }
 
-func writeDerived(b *strings.Builder, text labels, lang i18n.Lang, result *analysis.Result, opts Options) {
+// writeDerived renders the five derived sections from one result. Each section is
+// its own function: they share only the table and "not measured" helpers, and a
+// reader looking for one section should not have to walk past the other four.
+func writeDerived(b *strings.Builder, text labels, lang i18n.Lang, result *analysis.Result) {
 	b.WriteString("## " + text.derivedH + "\n\n")
 	b.WriteString(text.derivedNote + "\n\n")
+	writeGeoRates(b, text, lang, result)
+	writeQuestionRates(b, text, lang, result)
+	writeCoverageRates(b, text, lang, result)
+	writeCompetitorRates(b, text, lang, result)
+	writeDomainShares(b, text, lang, result)
+}
 
+func writeGeoRates(b *strings.Builder, text labels, lang i18n.Lang, result *analysis.Result) {
 	b.WriteString("### " + text.geoH + "\n\n")
 	if len(result.Groups) == 0 {
-		b.WriteString("`" + lang.Unmeasured() + "`\n\n")
-	} else {
-		rows := make([][]string, 0, len(result.Groups))
-		for _, group := range result.Groups {
-			rows = append(rows, []string{
-				group.Provider, group.Model, zeroAsDash(group.Stage),
-				group.CitedOwn.Display(lang), group.BrandMentioned.Display(lang),
-			})
-		}
-		writeTable(b, []string{text.provider, text.model, text.stage, text.citedRate, text.brandRate}, rows)
-		b.WriteString("\n" + text.brandNote + "\n\n")
-		// A mention rate rests on the chosen terms, so an unconfirmed term list is
-		// stated next to the rate rather than only in the conditions table.
-		if result.Conditions.HasBrandTermsProposed() {
-			b.WriteString(text.brandTermsProposedCaution + "\n\n")
-		}
+		writeUnmeasured(b, lang)
+		return
 	}
+	rows := make([][]string, 0, len(result.Groups))
+	for _, group := range result.Groups {
+		rows = append(rows, []string{
+			group.Provider, group.Model, zeroAsDash(group.Stage),
+			group.CitedOwn.Display(lang), group.BrandMentioned.Display(lang),
+		})
+	}
+	writeTable(b, []string{text.provider, text.model, text.stage, text.citedRate, text.brandRate}, rows)
+	b.WriteString("\n" + text.brandNote + "\n\n")
+	// A mention rate rests on the chosen terms, so an unconfirmed term list is
+	// stated next to the rate rather than only in the conditions table.
+	if result.Conditions.HasBrandTermsProposed() {
+		b.WriteString(text.brandTermsProposedCaution + "\n\n")
+	}
+}
 
+func writeQuestionRates(b *strings.Builder, text labels, lang i18n.Lang, result *analysis.Result) {
 	b.WriteString("### " + text.aeoQH + "\n\n")
 	if len(result.Groups) == 0 {
-		b.WriteString("`" + lang.Unmeasured() + "`\n\n")
+		writeUnmeasured(b, lang)
+		return
 	}
 	for _, group := range result.Groups {
-		fmt.Fprintf(b, "#### %s / %s / %s\n\n", group.Provider, group.Model, zeroAsDash(group.Stage))
+		writeGroupHeading(b, group, "")
 		if len(group.PerQuestion) == 0 {
-			b.WriteString("`" + lang.Unmeasured() + "`\n\n")
+			writeUnmeasured(b, lang)
 			continue
 		}
 		rows := make([][]string, 0, len(group.PerQuestion))
@@ -186,13 +199,16 @@ func writeDerived(b *strings.Builder, text labels, lang i18n.Lang, result *analy
 		writeTable(b, []string{text.question, text.category, text.questionText, text.acquireRate}, rows)
 		b.WriteString("\n")
 	}
+}
 
+func writeCoverageRates(b *strings.Builder, text labels, lang i18n.Lang, result *analysis.Result) {
 	b.WriteString("### " + text.coverageH + "\n\n")
 	if len(result.Groups) == 0 {
-		b.WriteString("`" + lang.Unmeasured() + "`\n\n")
+		writeUnmeasured(b, lang)
+		return
 	}
 	for _, group := range result.Groups {
-		fmt.Fprintf(b, "#### %s / %s / %s\n\n", group.Provider, group.Model, zeroAsDash(group.Stage))
+		writeGroupHeading(b, group, "")
 		coverage := group.Coverage
 		writeTable(b, []string{text.item, text.value}, [][]string{
 			{text.coverageRate, coverage.Rate.Display(lang)},
@@ -203,16 +219,19 @@ func writeDerived(b *strings.Builder, text labels, lang i18n.Lang, result *analy
 		})
 		b.WriteString("\n")
 	}
+}
 
+func writeCompetitorRates(b *strings.Builder, text labels, lang i18n.Lang, result *analysis.Result) {
 	b.WriteString("### " + text.competitorH + "\n\n")
 	b.WriteString(text.competitorNote + "\n\n")
 	if len(result.Groups) == 0 {
-		b.WriteString("`" + lang.Unmeasured() + "`\n\n")
+		writeUnmeasured(b, lang)
+		return
 	}
 	for _, group := range result.Groups {
-		fmt.Fprintf(b, "#### %s / %s / %s\n\n", group.Provider, group.Model, zeroAsDash(group.Stage))
+		writeGroupHeading(b, group, "")
 		if len(group.CompetitorRate) == 0 {
-			b.WriteString("`" + text.noCitation + "`\n\n")
+			writeNoCitation(b, text)
 			continue
 		}
 		rows := make([][]string, 0, len(group.CompetitorRate))
@@ -226,16 +245,19 @@ func writeDerived(b *strings.Builder, text labels, lang i18n.Lang, result *analy
 		writeTable(b, []string{text.domain, text.classification, text.registeredCol, text.runRate}, rows)
 		b.WriteString("\n")
 	}
+}
 
+func writeDomainShares(b *strings.Builder, text labels, lang i18n.Lang, result *analysis.Result) {
 	b.WriteString("### " + text.shareH + "\n\n")
 	b.WriteString(text.shareNote + "\n\n")
 	if len(result.Groups) == 0 {
-		b.WriteString("`" + lang.Unmeasured() + "`\n\n")
+		writeUnmeasured(b, lang)
+		return
 	}
 	for _, group := range result.Groups {
-		fmt.Fprintf(b, "#### %s / %s / %s (%d citations)\n\n", group.Provider, group.Model, zeroAsDash(group.Stage), group.CitationTotal)
+		writeGroupHeading(b, group, fmt.Sprintf(" (%d citations)", group.CitationTotal))
 		if len(group.DomainShare) == 0 {
-			b.WriteString("`" + text.noCitation + "`\n\n")
+			writeNoCitation(b, text)
 			continue
 		}
 		rows := make([][]string, 0, len(group.DomainShare))
@@ -245,7 +267,6 @@ func writeDerived(b *strings.Builder, text labels, lang i18n.Lang, result *analy
 		writeTable(b, []string{text.domain, text.classification, text.citationCount, text.share}, rows)
 		b.WriteString("\n")
 	}
-	_ = opts
 }
 
 func writeCompare(b *strings.Builder, text labels, lang i18n.Lang, result *analysis.Result, opts Options) {
@@ -310,6 +331,24 @@ func writeTable(b *strings.Builder, header []string, rows [][]string) {
 	for _, row := range rows {
 		b.WriteString("| " + strings.Join(row, " | ") + " |\n")
 	}
+}
+
+// writeGroupHeading is the heading of one group inside a per-group section, so the
+// three parts of the key keep the same order everywhere. suffix carries what only
+// one section adds (the citation total).
+func writeGroupHeading(b *strings.Builder, group analysis.Group, suffix string) {
+	fmt.Fprintf(b, "#### %s / %s / %s%s\n\n", group.Provider, group.Model, zeroAsDash(group.Stage), suffix)
+}
+
+// writeUnmeasured is the one wording for a section or a group with no measurement:
+// the rate is not zero, it does not exist.
+func writeUnmeasured(b *strings.Builder, lang i18n.Lang) {
+	b.WriteString("`" + lang.Unmeasured() + "`\n\n")
+}
+
+// writeNoCitation is the wording for a group that ran but cited no domain.
+func writeNoCitation(b *strings.Builder, text labels) {
+	b.WriteString("`" + text.noCitation + "`\n\n")
 }
 
 func join(text labels, values []string) string {

@@ -281,8 +281,11 @@ type Options struct {
 	Roster      []string
 }
 
-func groupKey(run sqlite.Run) string {
-	return run.Provider + "\x00" + run.Model + "\x00" + run.Stage
+// groupKey is the group identity as one string: provider, model and stage, joined by
+// a separator that cannot appear in a name. Build and Compare both use it, so two
+// groups of the same key are always the same group.
+func groupKey(provider, model, stage string) string {
+	return provider + "\x00" + model + "\x00" + stage
 }
 
 // Judgeable reports whether a run can be divided into a citation rate: it must
@@ -321,7 +324,7 @@ func bucketRuns(runs []sqlite.Run) (map[string]*acc, []string) {
 	buckets := map[string]*acc{}
 	order := []string{}
 	for _, run := range runs {
-		key := groupKey(run)
+		key := groupKey(run.Provider, run.Model, run.Stage)
 		if _, ok := buckets[key]; !ok {
 			buckets[key] = &acc{}
 			order = append(order, key)

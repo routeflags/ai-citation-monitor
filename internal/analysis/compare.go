@@ -60,94 +60,125 @@ func nDiffersNote(detail string, lang i18n.Lang) string {
 // two sides are not the same measurement (different endpoint version, question
 // set hash or tool version) and says why instead.
 func Compare(a, b *Result) []CompareRow {
-	type pair struct {
-		left  *Group
-		right *Group
-	}
-	keys := map[string]*pair{}
-	order := []string{}
-	add := func(groups []Group, left bool) {
-		for index := range groups {
-			group := &groups[index]
-			key := group.Provider + "\x00" + group.Model + "\x00" + group.Stage
-			if _, ok := keys[key]; !ok {
-				keys[key] = &pair{}
-				order = append(order, key)
-			}
-			if left {
-				keys[key].left = group
-			} else {
-				keys[key].right = group
-			}
-		}
-	}
-	add(a.Groups, true)
-	add(b.Groups, false)
-	sort.Strings(order)
-
-	groupRuns := func(result *Result, provider, model, stage string) []MeasurementIdentity {
-		identities := make([]MeasurementIdentity, 0, 8)
-		for _, run := range result.Runs {
-			if run.Provider == provider && run.Model == model && run.Stage == stage {
-				identities = append(identities, IdentityOf(run))
-			}
-		}
-		return identities
-	}
-
-	rows := make([]CompareRow, 0, len(order))
-	for _, key := range order {
-		part := keys[key]
-		left := part.left
-		right := part.right
-		row := CompareRow{}
-		if left != nil {
-			row.Provider, row.Model, row.Stage = left.Provider, left.Model, left.Stage
-			row.CitedA = left.CitedOwn
-			row.BrandA = left.BrandMentioned
-		} else if right != nil {
-			row.Provider, row.Model, row.Stage = right.Provider, right.Model, right.Stage
-		}
-		if right != nil {
-			row.CitedB = right.CitedOwn
-			row.BrandB = right.BrandMentioned
-		}
-		if left == nil || right == nil {
-			row.Reason = "unmeasured"
-			row.Note = row.NoteFor(i18n.EN)
-			row.CitedDeltaText = i18n.EN.Unmeasured()
-			row.BrandDeltaText = i18n.EN.Unmeasured()
-			rows = append(rows, row)
-			continue
-		}
-
-		mismatch := conditionMismatch(
-			groupRuns(a, row.Provider, row.Model, row.Stage),
-			groupRuns(b, row.Provider, row.Model, row.Stage),
-		)
-		if len(mismatch) > 0 {
-			row.Reason = "conditions_differ"
-			row.Detail = strings.Join(mismatch, " / ")
-			row.Note = row.NoteFor(i18n.EN)
-			row.CitedDeltaText = i18n.EN.Unmeasured()
-			row.BrandDeltaText = i18n.EN.Unmeasured()
-			rows = append(rows, row)
-			continue
-		}
-
-		row.Comparable = true
-		row.CitedDelta = Delta(row.CitedA, row.CitedB)
-		row.CitedDeltaText = DeltaText(row.CitedA, row.CitedB, i18n.EN)
-		row.BrandDelta = Delta(row.BrandA, row.BrandB)
-		row.BrandDeltaText = DeltaText(row.BrandA, row.BrandB, i18n.EN)
-		if row.CitedA.D != row.CitedB.D {
-			row.Reason = "n_differs"
-			row.Detail = itoa(row.CitedA.D) + " vs " + itoa(row.CitedB.D)
-			row.Note = row.NoteFor(i18n.EN)
-		}
-		rows = append(rows, row)
+	pairs := alignedGroups(a, b)
+	rows := make([]CompareRow, 0, len(pairs))
+	for _, pair := range pairs {
+		rows = append(rows, comparePair(a, b, pair))
 	}
 	return rows
+}
+
+// groupPair is one group key with the side of each period that recorded it. A key
+// only one period measured has one side nil.
+type groupPair struct {
+	left  *Group
+	right *Group
+}
+
+// alignedGroups joins the two results on provider, model and stage. The pairs come
+// back in key order, so the rows do not depend on the order either side was loaded
+// in.
+func alignedGroups(a, b *Result) []groupPair {
+	byKey := map[string]*groupPair{}
+	keys := []string{}
+	ensure := func(group *Group) *groupPair {
+		key := groupKey(group.Provider, group.Model, group.Stage)
+		pair, ok := byKey[key]
+		if !ok {
+			pair = &groupPair{}
+			byKey[key] = pair
+			keys = append(keys, key)
+		}
+		return pair
+	}
+	for index := range a.Groups {
+		ensure(&a.Groups[index]).left = &a.Groups[index]
+	}
+	for index := range b.Groups {
+		ensure(&b.Groups[index]).right = &b.Groups[index]
+	}
+	sort.Strings(keys)
+	pairs := make([]groupPair, 0, len(keys))
+	for _, key := range keys {
+		pairs = append(pairs, *byKey[key])
+	}
+	return pairs
+}
+
+// comparePair fills one row: the rates always, the delta only when both sides are
+// the same measurement.
+func comparePair(a, b *Result, pair groupPair) CompareRow {
+	row := rowFor(pair)
+	if pair.left == nil || pair.right == nil {
+		return noDelta(row, "unmeasured", "")
+	}
+	mismatch := conditionMismatch(
+		groupRuns(a, row.Provider, row.Model, row.Stage),
+		groupRuns(b, row.Provider, row.Model, row.Stage),
+	)
+	if len(mismatch) > 0 {
+		return noDelta(row, "conditions_differ", strings.Join(mismatch, " / "))
+	}
+	return deltaRow(row)
+}
+
+// rowFor starts the row for one pair. The key comes from whichever side recorded the
+// group (a pair exists only because one did), and each side fills its own rates.
+func rowFor(pair groupPair) CompareRow {
+	source := pair.left
+	if source == nil {
+		source = pair.right
+	}
+	row := CompareRow{Provider: source.Provider, Model: source.Model, Stage: source.Stage}
+	if pair.left != nil {
+		row.CitedA = pair.left.CitedOwn
+		row.BrandA = pair.left.BrandMentioned
+	}
+	if pair.right != nil {
+		row.CitedB = pair.right.CitedOwn
+		row.BrandB = pair.right.BrandMentioned
+	}
+	return row
+}
+
+// noDelta is the row for a comparison that must not subtract: the reason says why
+// ("unmeasured", "conditions_differ") and both delta texts read as unmeasured
+// rather than as a change of zero.
+func noDelta(row CompareRow, reason, detail string) CompareRow {
+	row.Reason = reason
+	row.Detail = detail
+	row.Note = row.NoteFor(i18n.EN)
+	row.CitedDeltaText = i18n.EN.Unmeasured()
+	row.BrandDeltaText = i18n.EN.Unmeasured()
+	return row
+}
+
+// deltaRow is the comparable row: both deltas are printed, and a difference in n is
+// stated next to them.
+func deltaRow(row CompareRow) CompareRow {
+	row.Comparable = true
+	row.CitedDelta = Delta(row.CitedA, row.CitedB)
+	row.CitedDeltaText = DeltaText(row.CitedA, row.CitedB, i18n.EN)
+	row.BrandDelta = Delta(row.BrandA, row.BrandB)
+	row.BrandDeltaText = DeltaText(row.BrandA, row.BrandB, i18n.EN)
+	if row.CitedA.D != row.CitedB.D {
+		row.Reason = "n_differs"
+		row.Detail = itoa(row.CitedA.D) + " vs " + itoa(row.CitedB.D)
+		row.Note = row.NoteFor(i18n.EN)
+	}
+	return row
+}
+
+// groupRuns lists the measurement identities recorded for one group, which is what
+// conditionMismatch compares.
+func groupRuns(result *Result, provider, model, stage string) []MeasurementIdentity {
+	identities := make([]MeasurementIdentity, 0, 8)
+	for _, run := range result.Runs {
+		if run.Provider == provider && run.Model == model && run.Stage == stage {
+			identities = append(identities, IdentityOf(run))
+		}
+	}
+	return identities
 }
 
 // conditionMismatch compares the conditions docs/metrics.md promises to check

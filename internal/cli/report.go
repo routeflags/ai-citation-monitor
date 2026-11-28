@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -77,26 +78,9 @@ func (a *App) runReport(cmd *cobra.Command, opts reportOptions) error {
 	if err != nil {
 		return failf(ExitConfig, "db_unavailable", "%v", err)
 	}
-
-	var compareResult *analysis.Result
-	if opts.compare != "" {
-		var comparePeriod analysis.Period
-		if opts.compare == "previous" {
-			previous, ok := analysis.PreviousPeriod(period)
-			if !ok {
-				return failf(ExitConfig, "period_invalid", "--compare previous needs a bounded period")
-			}
-			comparePeriod = previous
-		} else {
-			comparePeriod, err = analysis.ParsePeriod(opts.compare, a.NowUTC())
-			if err != nil {
-				return failf(ExitConfig, "period_invalid", "%v", err)
-			}
-		}
-		compareResult, err = analysis.LoadPeriod(ctx, db, comparePeriod, filter, analysisOpts)
-		if err != nil {
-			return failf(ExitConfig, "db_unavailable", "%v", err)
-		}
+	compareResult, err := a.comparePeriod(ctx, db, opts.compare, period, filter, analysisOpts)
+	if err != nil {
+		return err
 	}
 
 	markdown := reporting.Build(result, reporting.Options{
@@ -115,16 +99,9 @@ func (a *App) runReport(cmd *cobra.Command, opts reportOptions) error {
 		return nil
 	}
 
-	directory := opts.out
-	if directory == "" {
-		directory = cfg.ReportDir
-	}
-	if err := os.MkdirAll(directory, 0o755); err != nil {
-		return failf(ExitConfig, "report_write_failed", "cannot create %s: %v", directory, err)
-	}
-	path := filepath.Join(directory, fileName)
-	if err := os.WriteFile(path, []byte(markdown), 0o644); err != nil {
-		return failf(ExitConfig, "report_write_failed", "cannot write %s: %v", path, err)
+	path, err := writeReport(opts.out, cfg.ReportDir, fileName, markdown)
+	if err != nil {
+		return err
 	}
 
 	if a.JSON {
@@ -138,4 +115,51 @@ func (a *App) runReport(cmd *cobra.Command, opts reportOptions) error {
 		fmt.Fprintf(a.Out, "note:   no runs in this period; the report says %s\n", i18n.EN.Unmeasured())
 	}
 	return nil
+}
+
+// comparePeriod loads the period --compare names ("previous" or an explicit one). It
+// returns nil when --compare is absent, which is what tells reporting to leave the
+// comparison section out.
+func (a *App) comparePeriod(
+	ctx context.Context, db *sqlite.DB, compare string,
+	period analysis.Period, filter sqlite.RunFilter, analysisOpts analysis.Options,
+) (*analysis.Result, error) {
+	if compare == "" {
+		return nil, nil
+	}
+	var target analysis.Period
+	if compare == "previous" {
+		previous, ok := analysis.PreviousPeriod(period)
+		if !ok {
+			return nil, failf(ExitConfig, "period_invalid", "--compare previous needs a bounded period")
+		}
+		target = previous
+	} else {
+		parsed, err := analysis.ParsePeriod(compare, a.NowUTC())
+		if err != nil {
+			return nil, failf(ExitConfig, "period_invalid", "%v", err)
+		}
+		target = parsed
+	}
+	result, err := analysis.LoadPeriod(ctx, db, target, filter, analysisOpts)
+	if err != nil {
+		return nil, failf(ExitConfig, "db_unavailable", "%v", err)
+	}
+	return result, nil
+}
+
+// writeReport creates the report directory and writes the report into it, then
+// returns the path the command prints.
+func writeReport(directory, fallback, fileName, markdown string) (string, error) {
+	if directory == "" {
+		directory = fallback
+	}
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		return "", failf(ExitConfig, "report_write_failed", "cannot create %s: %v", directory, err)
+	}
+	path := filepath.Join(directory, fileName)
+	if err := os.WriteFile(path, []byte(markdown), 0o644); err != nil {
+		return "", failf(ExitConfig, "report_write_failed", "cannot write %s: %v", path, err)
+	}
+	return path, nil
 }

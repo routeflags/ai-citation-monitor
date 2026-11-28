@@ -98,62 +98,93 @@ func (a *App) competitorsListCommand() *cobra.Command {
 		Use:   "list",
 		Short: "List registered competitor domains",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := a.LoadConfig()
-			if err != nil {
-				return err
-			}
-			db, err := a.OpenDB(cfg)
-			if err != nil {
-				return err
-			}
-			defer db.Close()
-			ctx := cmd.Context()
-			project, err := a.RequireProject(ctx, db)
-			if err != nil {
-				return err
-			}
-			stored, err := db.Competitors(ctx, project.ID)
-			if err != nil {
-				return failf(ExitConfig, "db_unavailable", "%v", err)
-			}
-			combined := map[string]string{}
-			for _, configured := range cfg.Competitors {
-				combined[domain.CanonicalConfiguredDomain(configured)] = "config"
-			}
-			for _, stored := range stored {
-				combined[domain.CanonicalConfiguredDomain(stored)] = "database"
-			}
-			names := make([]string, 0, len(combined))
-			invalid := make([]string, 0, len(combined))
-			for competitor := range combined {
-				names = append(names, competitor)
-				// A row recorded before either check existed is not deleted: the table is the
-				// management record. It is shown with the reason it must be fixed, because a
-				// report still applies it until the config or the row is changed (D26).
-				if domain.IsPublicSuffix(competitor) {
-					invalid = append(invalid, competitor)
-				}
-			}
-			sort.Strings(names)
-			sort.Strings(invalid)
-			if a.JSON {
-				return a.PrintJSON(map[string]any{"competitors": combined, "invalid": invalid})
-			}
-			if len(combined) == 0 {
-				fmt.Fprintln(a.Out, "no competitor domains registered")
-				return nil
-			}
-			for _, competitor := range names {
-				if domain.IsPublicSuffix(competitor) {
-					fmt.Fprintf(a.Out, "%-40s %-9s public suffix: every site under it would count as this competitor\n",
-						competitor, combined[competitor])
-					continue
-				}
-				fmt.Fprintf(a.Out, "%-40s %s\n", competitor, combined[competitor])
-			}
-			return nil
+			return a.runCompetitorsList(cmd.Context())
 		},
 	}
+}
+
+// competitorList is one project's listing: every configured and stored domain with
+// the source it came from, plus the ones that must be fixed (D26).
+type competitorList struct {
+	sources map[string]string
+	names   []string
+	invalid []string
+}
+
+// listCompetitors merges the configured and stored domains by their canonical form.
+// A stored row is kept, not dropped: the table is the management record, and a report
+// still applies the row until the config or the row changes (D26).
+func listCompetitors(configured, stored []string) competitorList {
+	sources := map[string]string{}
+	for _, value := range configured {
+		sources[domain.CanonicalConfiguredDomain(value)] = "config"
+	}
+	for _, value := range stored {
+		sources[domain.CanonicalConfiguredDomain(value)] = "database"
+	}
+	list := competitorList{
+		sources: sources,
+		names:   make([]string, 0, len(sources)),
+		invalid: make([]string, 0, len(sources)),
+	}
+	for competitor := range sources {
+		list.names = append(list.names, competitor)
+		// A row recorded before either check existed is not deleted: it is shown with
+		// the reason it must be fixed, because a report still applies it.
+		if domain.IsPublicSuffix(competitor) {
+			list.invalid = append(list.invalid, competitor)
+		}
+	}
+	sort.Strings(list.names)
+	sort.Strings(list.invalid)
+	return list
+}
+
+func (a *App) runCompetitorsList(ctx context.Context) error {
+	cfg, err := a.LoadConfig()
+	if err != nil {
+		return err
+	}
+	db, err := a.OpenDB(cfg)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	project, err := a.RequireProject(ctx, db)
+	if err != nil {
+		return err
+	}
+	stored, err := db.Competitors(ctx, project.ID)
+	if err != nil {
+		return failf(ExitConfig, "db_unavailable", "%v", err)
+	}
+	list := listCompetitors(cfg.Competitors, stored)
+	if a.JSON {
+		return a.PrintJSON(map[string]any{"competitors": list.sources, "invalid": list.invalid})
+	}
+	a.printCompetitors(list)
+	return nil
+}
+
+// printCompetitors prints one line per domain in sorted order. An empty list says so
+// rather than printing nothing.
+func (a *App) printCompetitors(list competitorList) {
+	if len(list.sources) == 0 {
+		fmt.Fprintln(a.Out, "no competitor domains registered")
+		return
+	}
+	for _, competitor := range list.names {
+		a.printCompetitor(competitor, list.sources[competitor])
+	}
+}
+
+func (a *App) printCompetitor(competitor, source string) {
+	if domain.IsPublicSuffix(competitor) {
+		fmt.Fprintf(a.Out, "%-40s %-9s public suffix: every site under it would count as this competitor\n",
+			competitor, source)
+		return
+	}
+	fmt.Fprintf(a.Out, "%-40s %s\n", competitor, source)
 }
 
 func (a *App) competitorsRemoveCommand() *cobra.Command {

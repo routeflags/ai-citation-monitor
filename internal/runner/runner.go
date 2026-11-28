@@ -157,53 +157,81 @@ func (s *Summary) ExitKind() string {
 	}
 }
 
+// record counts one finished attempt. A failure is counted by the side that caused
+// it, so ExitKind can tell a provider outage from a transport problem. The caller
+// holds the summary's mutex.
+func (s *Summary) record(result oneResult) {
+	s.Calls++
+	switch result.status {
+	case providers.StatusSuccess:
+		s.Success++
+	case providers.StatusCancelled:
+		s.Cancelled++
+	default:
+		s.Failed++
+		if result.errorKind == providers.ErrorKindTransport {
+			s.TransportFailures++
+		} else {
+			s.ProviderFailures++
+		}
+	}
+}
+
 // Execute runs the plan. Every attempt is recorded; a cancellation stops new calls
 // but keeps what already finished.
 func (r *Runner) Execute(ctx context.Context, plan *Plan) (*Summary, error) {
 	summary := &Summary{Skipped: plan.AlreadyDone}
-
-	workers := r.Concurrency
-	if workers <= 0 {
-		workers = 1
-	}
-
 	var mutex sync.Mutex
 
 	jobs := make(chan Item)
 	var wait sync.WaitGroup
-	for index := 0; index < workers; index++ {
+	for index := 0; index < r.workerCount(); index++ {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			for item := range jobs {
-				if ctx.Err() != nil {
-					continue
-				}
-				result := r.executeOne(ctx, item)
-				mutex.Lock()
-				summary.Calls++
-				switch result.status {
-				case providers.StatusSuccess:
-					summary.Success++
-				case providers.StatusCancelled:
-					summary.Cancelled++
-				default:
-					summary.Failed++
-					switch result.errorKind {
-					case providers.ErrorKindTransport:
-						summary.TransportFailures++
-					default:
-						summary.ProviderFailures++
-					}
-				}
-				mutex.Unlock()
-			}
+			r.work(ctx, jobs, summary, &mutex)
 		}()
 	}
 
+	dispatched := r.dispatch(ctx, plan.Items, jobs)
+	close(jobs)
+	wait.Wait()
+
+	if plan.Pending > dispatched {
+		summary.NotRun = plan.Pending - dispatched
+	}
+	return summary, nil
+}
+
+// workerCount is the configured concurrency with one worker as the floor, so a run
+// always makes progress.
+func (r *Runner) workerCount() int {
+	if r.Concurrency <= 0 {
+		return 1
+	}
+	return r.Concurrency
+}
+
+// work is one worker: it takes items until the channel closes and skips the ones
+// that arrive after a cancellation, which executeOne would record as cancelled.
+func (r *Runner) work(ctx context.Context, jobs <-chan Item, summary *Summary, mutex *sync.Mutex) {
+	for item := range jobs {
+		if ctx.Err() != nil {
+			continue
+		}
+		result := r.executeOne(ctx, item)
+		mutex.Lock()
+		summary.record(result)
+		mutex.Unlock()
+	}
+}
+
+// dispatch hands items to the workers until the plan is exhausted or the context is
+// cancelled, and reports how many calls actually went out. It does not close jobs:
+// the caller does that after every worker has been started.
+func (r *Runner) dispatch(ctx context.Context, items []Item, jobs chan<- Item) int {
 	dispatched := 0
-dispatch:
-	for _, item := range plan.Items {
+	for _, item := range items {
 		if item.AlreadyDone {
 			continue
 		}
@@ -212,19 +240,12 @@ dispatch:
 		}
 		select {
 		case <-ctx.Done():
-			break dispatch
+			return dispatched
 		case jobs <- item:
 			dispatched++
 		}
 	}
-	close(jobs)
-	wait.Wait()
-
-	pending := plan.Pending
-	if dispatched < pending {
-		summary.NotRun = pending - dispatched
-	}
-	return summary, nil
+	return dispatched
 }
 
 type oneResult struct {

@@ -21,17 +21,23 @@ linters:
     # InsertRun at 21) were split in this change; 20 is one branch below the
     # smallest of those, so a checklist that grows back to that size fails next
     # time. Ordinary code is untouched either way: nothing left in the codebase
-    # scores above 19 branches. gocognit stays at 30 because it catches the other
-    # shape, a deep nest with few branches, and the two ceilings bound the same
-    # functions from different directions (the tail here runs 15-19 branches and
-    # up to 30 points).
+    # scores above 19 branches.
+    #
+    # gocognit is now 25 for the same reason: the nine functions that were still
+    # above it (26-30 points: compare, the competitors/export/verify/report
+    # commands, the CLI harness, the derived report sections, Execute and Migrate)
+    # were split into helpers in this change, so 25 is one point below the smallest
+    # of them. Nothing left scores above 24 points, and the gate still catches the
+    # other shape, a deep nest with few branches: the two ceilings bound the same
+    # functions from different directions (the tail now runs 15-19 branches and up
+    # to 24 points).
     - gocyclo
     - gocognit
   settings:
     gocyclo:
       min-complexity: 20
     gocognit:
-      min-complexity: 30
+      min-complexity: 25
     errcheck:
       # Closing and printing are not recoverable here: the operation is already
       # done, and failing a run because stderr was closed would hide the result.

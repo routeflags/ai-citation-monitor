@@ -153,73 +153,103 @@ func newHarness(t *testing.T) *harness {
 	h.configPath = filepath.Join(h.dir, "aicm.toml")
 	h.dbPath = filepath.Join(h.dir, "measurements", "aicm.db")
 
-	h.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case strings.HasPrefix(r.URL.Path, "/perplexity/"):
-			// base_url + /agent, so the path also proves the adapter appends the
-			// Agent API path and not /responses.
-			if r.URL.Path != "/perplexity/v1/agent" {
-				t.Errorf("perplexity path = %s, want /perplexity/v1/agent", r.URL.Path)
-			}
-			h.perplexityHits.Add(1)
-			if got := r.Header.Get("Authorization"); got != "Bearer perplexity-test-dummy" {
-				t.Errorf("perplexity authorization = %q", got)
-			}
-			w.Write([]byte(h.perplexityBody))
-		case r.URL.Path == "/xai/responses":
-			// Grok speaks the same Responses path as OpenAI, so the harness gives
-			// it its own base-URL prefix. The match is exact, not a suffix: a
-			// suffix rule would serve the OpenAI fixture to grok and the test
-			// would still pass on the shared output[]/annotations[] shape.
-			h.grokHits.Add(1)
-			if got := r.Header.Get("Authorization"); got != "Bearer xai-test-dummy" {
-				t.Errorf("grok authorization = %q, want the configured key", got)
-			}
-			w.Write([]byte(h.grokBody))
-		case r.URL.Path == "/responses":
-			h.openaiHits.Add(1)
-			if got := r.Header.Get("Authorization"); !strings.HasPrefix(got, "Bearer ") {
-				t.Errorf("missing authorization header")
-			}
-			status := h.openaiStatus
-			if status == 0 {
-				status = http.StatusOK
-			}
-			w.WriteHeader(status)
-			w.Write([]byte(h.openaiBody))
-		case strings.Contains(r.URL.Path, ":generateContent"):
-			h.geminiHits.Add(1)
-			if r.Header.Get("x-goog-api-key") == "" {
-				t.Errorf("missing x-goog-api-key header")
-			}
-			w.Write([]byte(h.geminiBody))
-		case strings.HasSuffix(r.URL.Path, "/v1/messages"):
-			h.anthropicHits.Add(1)
-			if r.Header.Get("x-api-key") == "" {
-				t.Errorf("missing x-api-key header")
-			}
-			if r.Header.Get("anthropic-version") == "" {
-				t.Errorf("missing anthropic-version header")
-			}
-			w.Write([]byte(h.anthropicBody))
-		default:
-			t.Errorf("unexpected path %s", r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
+	h.server = httptest.NewServer(http.HandlerFunc(h.serve))
 	t.Cleanup(h.server.Close)
 
-	t.Setenv("OPENAI_API_KEY", "sk-test-dummy")
-	t.Setenv("GEMINI_API_KEY", "gemini-test-dummy")
-	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test-dummy")
-	t.Setenv("PERPLEXITY_API_KEY", "perplexity-test-dummy")
-	t.Setenv("XAI_API_KEY", "xai-test-dummy")
+	setProviderKeys(t)
 	h.writeConfig()
 	if code, _, stderr := h.run("init", "--non-interactive", "--force", "--site-id", "demo", "--own-domain", "example.shop"); code != ExitOK {
 		t.Fatalf("init = %d: %s", code, stderr)
 	}
 	return h
+}
+
+// setProviderKeys points every adapter at a dummy key, so no test can reach a real
+// provider even if a base URL were wrong.
+func setProviderKeys(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "sk-test-dummy")
+	t.Setenv("GEMINI_API_KEY", "gemini-test-dummy")
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test-dummy")
+	t.Setenv("PERPLEXITY_API_KEY", "perplexity-test-dummy")
+	t.Setenv("XAI_API_KEY", "xai-test-dummy")
+}
+
+// serve routes one call to the fixture of the adapter that sent it. Each adapter has
+// its own method, so the assertions about its path and headers stay next to the
+// fixture they belong to.
+func (h *harness) serve(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	switch {
+	case strings.HasPrefix(r.URL.Path, "/perplexity/"):
+		h.servePerplexity(w, r)
+	case r.URL.Path == "/xai/responses":
+		h.serveGrok(w, r)
+	case r.URL.Path == "/responses":
+		h.serveOpenAI(w, r)
+	case strings.Contains(r.URL.Path, ":generateContent"):
+		h.serveGemini(w, r)
+	case strings.HasSuffix(r.URL.Path, "/v1/messages"):
+		h.serveAnthropic(w, r)
+	default:
+		h.t.Errorf("unexpected path %s", r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}
+}
+
+// servePerplexity proves base_url + /agent: the recorded path is the Agent API path,
+// not /responses.
+func (h *harness) servePerplexity(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/perplexity/v1/agent" {
+		h.t.Errorf("perplexity path = %s, want /perplexity/v1/agent", r.URL.Path)
+	}
+	h.perplexityHits.Add(1)
+	if got := r.Header.Get("Authorization"); got != "Bearer perplexity-test-dummy" {
+		h.t.Errorf("perplexity authorization = %q", got)
+	}
+	w.Write([]byte(h.perplexityBody))
+}
+
+// serveGrok matches its path exactly, not as a suffix: a suffix rule would serve the
+// OpenAI fixture to grok, and the test would still pass on the shared
+// output[]/annotations[] shape.
+func (h *harness) serveGrok(w http.ResponseWriter, r *http.Request) {
+	h.grokHits.Add(1)
+	if got := r.Header.Get("Authorization"); got != "Bearer xai-test-dummy" {
+		h.t.Errorf("grok authorization = %q, want the configured key", got)
+	}
+	w.Write([]byte(h.grokBody))
+}
+
+func (h *harness) serveOpenAI(w http.ResponseWriter, r *http.Request) {
+	h.openaiHits.Add(1)
+	if got := r.Header.Get("Authorization"); !strings.HasPrefix(got, "Bearer ") {
+		h.t.Errorf("missing authorization header")
+	}
+	status := h.openaiStatus
+	if status == 0 {
+		status = http.StatusOK
+	}
+	w.WriteHeader(status)
+	w.Write([]byte(h.openaiBody))
+}
+
+func (h *harness) serveGemini(w http.ResponseWriter, r *http.Request) {
+	h.geminiHits.Add(1)
+	if r.Header.Get("x-goog-api-key") == "" {
+		h.t.Errorf("missing x-goog-api-key header")
+	}
+	w.Write([]byte(h.geminiBody))
+}
+
+func (h *harness) serveAnthropic(w http.ResponseWriter, r *http.Request) {
+	h.anthropicHits.Add(1)
+	if r.Header.Get("x-api-key") == "" {
+		h.t.Errorf("missing x-api-key header")
+	}
+	if r.Header.Get("anthropic-version") == "" {
+		h.t.Errorf("missing anthropic-version header")
+	}
+	w.Write([]byte(h.anthropicBody))
 }
 
 func (h *harness) writeConfig() {
