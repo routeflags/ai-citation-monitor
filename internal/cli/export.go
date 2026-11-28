@@ -166,7 +166,7 @@ Exit 1 when anything is found, 0 when the database is consistent.`,
 				if len(issues) == 0 {
 					fmt.Fprintln(a.Out, "OK: the database is self-consistent")
 				} else {
-					fmt.Fprintf(a.Out, "\n%-32s %-8s %s\n", "kind", "run", "detail")
+					fmt.Fprintf(a.Out, "\n%s\n", a.styles().header("%-32s %-8s %s", "kind", "run", "detail"))
 					for _, issue := range issues {
 						fmt.Fprintf(a.Out, "%-32s %-8d %s\n", issue.Kind, issue.RunID, issue.Detail)
 					}

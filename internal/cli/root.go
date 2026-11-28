@@ -1,5 +1,6 @@
 // Package cli wires the commands. All I/O decisions live here: human tables go to
-// stdout, logs and progress go to stderr, and --json makes stdout JSON only.
+// stdout (styled when stdout is a terminal), logs and progress go to stderr, and
+// --json makes stdout JSON only.
 package cli
 
 import (
@@ -27,6 +28,7 @@ type App struct {
 	JSON       bool
 	Quiet      bool
 	Verbose    bool
+	NoColor    bool
 	Out        io.Writer
 	Err        io.Writer
 	In         io.Reader
@@ -81,6 +83,7 @@ are not every user's answer. Every report says so.`,
 	root.PersistentFlags().BoolVar(&a.JSON, "json", false, "write machine readable JSON to stdout and logs to stderr")
 	root.PersistentFlags().BoolVar(&a.Quiet, "quiet", false, "do not print progress")
 	root.PersistentFlags().BoolVar(&a.Verbose, "verbose", false, "print request level detail to stderr")
+	root.PersistentFlags().BoolVar(&a.NoColor, "no-color", false, "never style the human output, even on a terminal")
 
 	root.AddCommand(
 		a.initCommand(),

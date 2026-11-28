@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Styled terminal output** (`charm.land/lipgloss/v2`). The human output on
+  stdout now carries weight and colour for structure: table headers and the
+  label column of the `run` plan are bold, a rising citation or mention rate is
+  green, a falling one red, and a rate with no measurement is dim. The styling
+  adds escapes only — the text and the column widths are identical with and
+  without it, so a piped or logged transcript reads exactly like the terminal.
+- Colour is used only when stdout is a terminal. `--json` and stderr are never
+  styled, and `--no-color`, `NO_COLOR` and `TERM=dumb` turn it off. `--no-color`
+  is the new global flag for the same opt-out.
+
 ## [0.2.0] - 2026-11-28
 
 ### Added

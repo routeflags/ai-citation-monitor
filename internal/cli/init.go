@@ -230,8 +230,12 @@ func (a *App) prompt(cfg *config.Config) error {
 	return nil
 }
 
-func isTerminal(reader io.Reader) bool {
-	file, ok := reader.(*os.File)
+// isTerminal reports whether stream is a terminal. Asking about stdin (may we
+// prompt?) and about stdout (may we add colour?) is the same question: is this
+// file a character device. Anything else — a pipe, a file, a test buffer — is
+// not a terminal and gets no prompt and no escapes.
+func isTerminal(stream any) bool {
+	file, ok := stream.(*os.File)
 	if !ok {
 		return false
 	}

@@ -119,7 +119,7 @@ func (a *App) questionsListCommand() *cobra.Command {
 				fmt.Fprintln(a.Out, "no questions yet (import a question set with `aicm questions import --file ...`)")
 				return nil
 			}
-			fmt.Fprintf(a.Out, "%-6s %-14s %-16s %s\n", "id", "version", "category", "text")
+			fmt.Fprintln(a.Out, a.styles().header("%-6s %-14s %-16s %s", "id", "version", "category", "text"))
 			for _, q := range questions {
 				fmt.Fprintf(a.Out, "%-6s %-14s %-16s %s\n", q.Key, q.Version, q.Category, q.Text)
 			}

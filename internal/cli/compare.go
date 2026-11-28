@@ -107,18 +107,19 @@ func (a *App) runCompare(cmd *cobra.Command, opts compareOptions) error {
 			"baseline": baseline, "period": period, "rows": rows,
 		})
 	}
+	s := a.styles()
 	fmt.Fprintf(a.Out, "baseline: %s\nperiod:   %s\n\n", baseline.Label, period.Label)
 	if len(rows) == 0 {
 		fmt.Fprintln(a.Out, "no comparable groups (no runs on either side)")
 		return nil
 	}
-	fmt.Fprintf(a.Out, "%-8s %-28s %-9s %-18s %-18s %-10s %-18s %-18s %-10s %s\n",
-		"provider", "model", "stage", "cited (base)", "cited (now)", "delta", "brand (base)", "brand (now)", "delta", "note")
+	fmt.Fprintln(a.Out, s.header("%-8s %-28s %-9s %-18s %-18s %-10s %-18s %-18s %-10s %s",
+		"provider", "model", "stage", "cited (base)", "cited (now)", "delta", "brand (base)", "brand (now)", "delta", "note"))
 	for _, row := range rows {
-		fmt.Fprintf(a.Out, "%-8s %-28s %-9s %-18s %-18s %-10s %-18s %-18s %-10s %s\n",
+		fmt.Fprintf(a.Out, "%-8s %-28s %-9s %-18s %-18s %s %-18s %-18s %s %s\n",
 			row.Provider, row.Model, nonEmpty(row.Stage, "—"),
-			row.CitedA.Display(i18n.EN), row.CitedB.Display(i18n.EN), row.CitedDeltaText,
-			row.BrandA.Display(i18n.EN), row.BrandB.Display(i18n.EN), row.BrandDeltaText, row.Note)
+			row.CitedA.Display(i18n.EN), row.CitedB.Display(i18n.EN), s.delta(row.CitedDelta, row.CitedDeltaText, 10),
+			row.BrandA.Display(i18n.EN), row.BrandB.Display(i18n.EN), s.delta(row.BrandDelta, row.BrandDeltaText, 10), row.Note)
 	}
 	return nil
 }
@@ -176,14 +177,15 @@ func (a *App) trendsCommand() *cobra.Command {
 				fmt.Fprintln(a.Out, "no runs in this period (—（未測定）)")
 				return nil
 			}
+			s := a.styles()
 			for _, one := range series {
 				fmt.Fprintf(a.Out, "%s / %s / %s\n", one.Provider, one.Model, nonEmpty(one.Stage, "—"))
-				fmt.Fprintf(a.Out, "  %-12s %6s %6s %6s %6s %-22s %-12s %-22s %s\n",
-					"bucket", "runs", "ok", "fail", "unk", "cited", "delta", "brand", "note")
+				fmt.Fprintln(a.Out, s.header("  %-12s %6s %6s %6s %6s %-22s %-12s %-22s %s",
+					"bucket", "runs", "ok", "fail", "unk", "cited", "delta", "brand", "note"))
 				for _, point := range one.Points {
-					fmt.Fprintf(a.Out, "  %-12s %6d %6d %6d %6d %-22s %-12s %-22s %s\n",
+					fmt.Fprintf(a.Out, "  %-12s %6d %6d %6d %6d %-22s %s %-22s %s\n",
 						point.Bucket, point.RunsTotal, point.RunsValid, point.RunsError, point.RunsUnknown,
-						point.CitedOwn.Display(i18n.EN), point.CitedDeltaText, point.BrandMentioned.Display(i18n.EN), point.Note)
+						point.CitedOwn.Display(i18n.EN), s.delta(point.CitedDelta, point.CitedDeltaText, 12), point.BrandMentioned.Display(i18n.EN), point.Note)
 				}
 				fmt.Fprintln(a.Out)
 			}

@@ -1,7 +1,7 @@
 # CLI reference
 
 ```
-aicm [--config PATH] [--db PATH] [--json] [--quiet] [--verbose] COMMAND
+aicm [--config PATH] [--db PATH] [--json] [--quiet] [--verbose] [--no-color] COMMAND
 ```
 
 Global flags:
@@ -13,6 +13,30 @@ Global flags:
 | `--json` | stdout carries JSON only; logs and progress go to stderr |
 | `--quiet` | no progress output |
 | `--verbose` | request-level detail on stderr |
+| `--no-color` | never style the human output, even on a terminal |
+
+## Output and colour
+
+Human output goes to stdout; logs, warnings and errors go to stderr. `--json`
+makes stdout a single JSON document, so the two never mix.
+
+The human output uses weight and colour for structure only: table headers and the
+label column of the `run` plan are bold, a rising rate is green, a falling one red,
+and a rate with no measurement is dim. Nothing else changes — the text and the
+column widths are the same with and without colour, so `aicm compare | tee` shows
+the same table a terminal does, byte for byte once the escapes are stripped.
+
+Colour is written only when stdout is a terminal. `--json` output and everything on
+stderr are never styled. These turn it off as well:
+
+| Turn-off | |
+|---|---|
+| `--no-color` | the flag; always wins |
+| `NO_COLOR` | environment variable, any non-empty value ([no-color.org](https://no-color.org)) |
+| `TERM=dumb` | environment variable |
+
+The escapes are the eight basic ANSI colours, which every terminal understands, so
+no terminal capability is queried and nothing is downsampled.
 
 ## Exit codes
 

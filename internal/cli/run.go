@@ -239,18 +239,19 @@ func (a *App) runMeasure(cmd *cobra.Command, opts runOptions) error {
 	}
 
 	if !a.JSON {
-		fmt.Fprintf(a.Out, "questions: %d\n", plan.Questions)
+		s := a.styles()
+		s.planLine(a.Out, "questions:", "%d", plan.Questions)
 		for _, target := range targets {
-			fmt.Fprintf(a.Out, "target:    %s / %s\n", target.Provider, target.Model)
+			s.planLine(a.Out, "target:", "%s / %s", target.Provider, target.Model)
 		}
-		fmt.Fprintf(a.Out, "condition: stage=%s repeat=%d session=%s\n", nonEmpty(opts.stage, "(none)"), opts.repeat, session)
-		fmt.Fprintf(a.Out, "calls:     %d planned, %d already recorded (skipped)\n", plan.Pending, plan.AlreadyDone)
-		fmt.Fprintf(a.Out, "store:     %s\n", storeLine(storeBody))
+		s.planLine(a.Out, "condition:", "stage=%s repeat=%d session=%s", nonEmpty(opts.stage, "(none)"), opts.repeat, session)
+		s.planLine(a.Out, "calls:", "%d planned, %d already recorded (skipped)", plan.Pending, plan.AlreadyDone)
+		s.planLine(a.Out, "store:", "%s", storeLine(storeBody))
 		if plan.FailedRecorded > 0 {
 			// A recorded failure is not a measurement, but it holds its condition for
 			// this session (the database keeps one row per condition). Say so instead of
 			// letting the run look like there was nothing to do.
-			fmt.Fprintf(a.Out, "note:      %d of the recorded calls failed and are not resent in this session; pass --session <label> to measure them again\n",
+			s.planLine(a.Out, "note:", "%d of the recorded calls failed and are not resent in this session; pass --session <label> to measure them again",
 				plan.FailedRecorded)
 		}
 	}

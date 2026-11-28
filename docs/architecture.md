@@ -4,7 +4,7 @@
 
 ```
 cmd/aicm            main(): os.Exit(cli.Execute())
-internal/cli        command tree, exit codes, output routing
+internal/cli        command tree, exit codes, output routing and terminal styling
 internal/config     aicm.toml (TOML), defaults, validation, warnings
 internal/question   question-set inputs (YAML contract, CSV)
 internal/runner     plan, resume, concurrency, record every attempt
@@ -27,7 +27,9 @@ migrations          embedded SQL, applied in order, tracked in schema_migrations
 Dependencies, deliberately few: `spf13/cobra` (CLI), `gopkg.in/yaml.v3` (question
 sets), `BurntSushi/toml` (config), `modernc.org/sqlite` (CGO-free SQLite),
 `golang.org/x/text` (NFKC), `golang.org/x/time` (token bucket), `golang.org/x/net`
-(IDN mapping and the public suffix list).
+(IDN mapping and the public suffix list), and `charm.land/lipgloss/v2`
+(presentation only: bold and colour on human output, no number and no record
+depends on it).
 
 ## One call, end to end
 
