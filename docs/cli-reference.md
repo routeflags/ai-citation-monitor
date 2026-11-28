@@ -77,6 +77,10 @@ otherwise: an operator who measures in Japanese expects the report in Japanese.
 The CLI and its help stay English either way. A language other than `en` or `ja`
 is a configuration error (exit 2), not a silent English report.
 
+`--competitors` accepts the same values `competitors add` does: the value is
+canonicalised, and a public suffix is a configuration error (exit 2). Nothing is
+written when the configuration is invalid.
+
 ## questions
 
 ```
@@ -220,6 +224,15 @@ labels in punycode) before storing it, and refuses a public suffix such as `gith
 or `co.jp`: a competitor row stands for its whole site, so registering a shared suffix
 would count every customer under it as one competitor. Use the registrable domain (or
 your own subdomain under a hosted suffix).
+
+The same check applies to the configuration: a public suffix in `competitors` or in
+`aicm init --competitors` is a configuration error (exit 2), so a measurement cannot
+start with a value that would over-match every report (D26). Existing rows are never
+deleted — the table is a management record — and `list` shows them with
+`public suffix: every site under it would count as this competitor`. In `--json`,
+`invalid` lists those values next to the unchanged `competitors` object. Commands that
+only read (`report`, `trends`, `compare`, `export`, `verify`) keep working, so existing
+data stays readable; fix the value before the next `run`.
 
 ## export
 

@@ -162,10 +162,12 @@ into every run as part of `tool_version`).
   is a configuration error (exit 2): every customer under that suffix would count as
   one site, and the citation rate would be meaningless. The check uses
   `golang.org/x/net/publicsuffix`, including the private section (hosting suffixes).
-- **Known limit**: a public suffix in `competitors` is not rejected by the config
-  loader, only `own_domain` is. Registering `co.jp` in `aicm.toml` would over-match the
-  same way. `aicm competitors add` does refuse a public suffix, because a competitor row
-  stands for a whole site (D23).
+- **A public suffix is not a competitor either.** `competitors add`, `aicm init
+  --competitors` and the config loader refuse one (exit 2), because a competitor row
+  stands for a whole site (D23): `co.jp` would count every customer under it as that
+  competitor. Rows already in the `competitors` table are not deleted — it is a
+  management table — and `aicm competitors list` marks them. A report applies them
+  until the config or the row is fixed, which is the remaining limit (D26).
 
 ## What a competitor row stands for
 
@@ -177,6 +179,12 @@ competitor) that contains the host, and otherwise the host's registrable domain
 exact host, because that setting is about the unit of comparison. The same function
 decides the row of a configured competitor, so a registration deeper than its
 registrable domain stays its own row instead of absorbing its siblings (D23).
+
+A configured competitor is reduced to that same form once, by
+`domain.CanonicalConfiguredDomain` (lower case, no scheme or path, no trailing dot,
+IDN in punycode), and a public suffix is refused before a measurement runs, so the
+value in `aicm.toml`, the value `competitors add` stores and the value the report
+matches cannot be three different domains (D26).
 
 ## Measurement identity
 

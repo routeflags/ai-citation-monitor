@@ -46,10 +46,11 @@ Details that matter:
   With `subdomains = false` the row is the exact host, because "exact match only" is a
   statement about the unit of comparison. A host the public suffix list cannot
   resolve (`localhost`, an IP address, `github.io` on its own) keeps its own row.
-  A public suffix cannot be registered as a competitor (`aicm competitors add` refuses
-  it), since every customer under it would become one competitor; a value that is
-  already in a config file is still over-matched, which `docs/architecture.md` records
-  as a known limit.
+  A public suffix cannot be registered as a competitor: `aicm competitors add`, `aicm
+  init --competitors` and the config loader refuse it (exit 2), since every customer
+  under it would become one competitor (D23, D26). Rows already in the database are
+  not deleted; `aicm competitors list` marks them, and a report keeps applying them
+  until the config or the row is fixed.
 - **Competitor citation rate does not add up to 100%.** One answer can cite
   several domains, so it is a per-domain rate, not a partition.
 - **Citation share counts hosts, not sites.** `example.com` and `www.example.com` are

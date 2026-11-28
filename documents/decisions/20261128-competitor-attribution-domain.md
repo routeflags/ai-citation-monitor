@@ -30,10 +30,11 @@
 7. **`registered` フラグ**は「競合として登録されている」の意味（従来どおり）。自社ドメインの行は
    `registered = false` のまま（`classification = own` で読み分ける）。未引用の登録競合は
    `Runs = 0` の行として出る。
-8. **public suffix の競合登録は新規には拒否する**。`competitors add` は `domain.IsPublicSuffix` で
+8. **public suffix の競合登録は拒否する**。`competitors add` は `domain.IsPublicSuffix` で
    `github.io` / `co.jp` をエラー（exit 2）にする。D23 では行そのものが suffix 配下の全サイトを
-   吸い上げるため、分類だけの over-match より影響が大きい。既存の設定ファイル/DB に残る値は
-   引き続き over-match する（既知の限界として `docs/architecture.md` に残し、設定検証は別 issue）。
+   吸い上げるため、分類だけの over-match より影響が大きい。設定ファイルと `aicm init
+   --competitors` も D26（`documents/decisions/20261128-competitor-config-validation.md`）で
+   同じ検証を通す。既存の DB 行は消さず、`competitors list` が印を付ける。
 
 ## 理由
 
