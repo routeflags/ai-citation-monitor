@@ -189,11 +189,11 @@ This is a single small sample, not evidence that changing a question causes more
 | **Brand mention rate** | Share of successful answers containing a registered brand term |
 | **AEO per-question citation rate** | Citation rate calculated separately for each question |
 | **AEO question coverage** | Share of judgeable questions that cited your domain at least once |
-| **Competitor citation rate** | Share of judgeable answers citing each registered competitor domain |
+| **Competitor citation rate** | Share of judgeable answers citing a competitor's site: the domain you registered, or one of its subdomains when subdomains are included |
 | **Citation share** | A domain's share of citations in the stated group and denominator |
 | **Trends** | Time-series measurements and changes in percentage points from the preceding bucket |
 
-**Interpretation matters:** every rate reports its denominator `n`. `n = 0` means *not measured*, never 0% visibility. Failed calls or responses without citation observability are not silently treated as uncited answers. Rates are grouped by **provider × model × stage**, rather than mixed across incompatible conditions. Competitor citation rates can add up to more than 100% because an answer can cite multiple domains. For exact numerators and denominators, see [metrics definitions](docs/metrics.md).
+**Interpretation matters:** every rate reports its denominator `n`. `n = 0` means *not measured*, never 0% visibility. Failed calls or responses without citation observability are not silently treated as uncited answers, and the status of a call and the observability of its citations are separate dimensions. Rates are grouped by **provider × model × stage**; when a period puts records of different measurement conditions into one group, the report lists the fields that differ (`mixed_conditions`) instead of presenting the average as one measurement. Competitor citation rates can add up to more than 100% because an answer can cite multiple domains. Citation share counts hosts, so it is read separately from the per-site citation rate. For exact numerators and denominators, see [metrics definitions](docs/metrics.md).
 
 ## CLI commands
 
