@@ -2,9 +2,12 @@ package cli
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/routeflags/ai-citation-monitor/internal/domain"
 )
 
 func (a *App) competitorsCommand() *cobra.Command {
@@ -30,9 +33,15 @@ func (a *App) competitorsAddCommand() *cobra.Command {
 		Short: "Register a competitor domain",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			domain := normalizeDomain(args[0])
-			if domain == "" {
+			competitor := normalizeDomain(args[0])
+			if competitor == "" {
 				return failf(ExitConfig, "usage", "a bare host name is required")
+			}
+			// A public suffix is shared by unrelated organisations, and a competitor
+			// row now stands for its whole site (D23): registering one would count
+			// every customer of that suffix as that competitor.
+			if domain.IsPublicSuffix(competitor) {
+				return failf(ExitConfig, "usage", "%s is a public suffix, so every site under it would count as that competitor; register a registrable domain instead", competitor)
 			}
 			cfg, err := a.LoadConfig()
 			if err != nil {
@@ -48,13 +57,13 @@ func (a *App) competitorsAddCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := db.AddCompetitor(ctx, project.ID, domain, label); err != nil {
+			if err := db.AddCompetitor(ctx, project.ID, competitor, label); err != nil {
 				return failf(ExitConfig, "db_write_failed", "%v", err)
 			}
 			if a.JSON {
-				return a.PrintJSON(map[string]any{"domain": domain, "label": label})
+				return a.PrintJSON(map[string]any{"domain": competitor, "label": label})
 			}
-			fmt.Fprintf(a.Out, "competitor: %s\n", domain)
+			fmt.Fprintf(a.Out, "competitor: %s\n", competitor)
 			return nil
 		},
 	}
@@ -86,11 +95,11 @@ func (a *App) competitorsListCommand() *cobra.Command {
 				return failf(ExitConfig, "db_unavailable", "%v", err)
 			}
 			combined := map[string]string{}
-			for _, domain := range cfg.Competitors {
-				combined[normalizeDomain(domain)] = "config"
+			for _, configured := range cfg.Competitors {
+				combined[normalizeDomain(configured)] = "config"
 			}
-			for _, domain := range stored {
-				combined[domain] = "database"
+			for _, stored := range stored {
+				combined[normalizeDomain(stored)] = "database"
 			}
 			if a.JSON {
 				return a.PrintJSON(map[string]any{"competitors": combined})
@@ -99,8 +108,13 @@ func (a *App) competitorsListCommand() *cobra.Command {
 				fmt.Fprintln(a.Out, "no competitor domains registered")
 				return nil
 			}
-			for domain, origin := range combined {
-				fmt.Fprintf(a.Out, "%-40s %s\n", domain, origin)
+			names := make([]string, 0, len(combined))
+			for competitor := range combined {
+				names = append(names, competitor)
+			}
+			sort.Strings(names)
+			for _, competitor := range names {
+				fmt.Fprintf(a.Out, "%-40s %s\n", competitor, combined[competitor])
 			}
 			return nil
 		},
@@ -113,7 +127,7 @@ func (a *App) competitorsRemoveCommand() *cobra.Command {
 		Short: "Remove a registered competitor domain",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			domain := normalizeDomain(args[0])
+			competitor := normalizeDomain(args[0])
 			cfg, err := a.LoadConfig()
 			if err != nil {
 				return err
@@ -128,32 +142,54 @@ func (a *App) competitorsRemoveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			removed, err := db.RemoveCompetitor(ctx, project.ID, domain)
+			stored, err := db.Competitors(ctx, project.ID)
 			if err != nil {
-				return failf(ExitConfig, "db_write_failed", "%v", err)
+				return failf(ExitConfig, "db_unavailable", "%v", err)
+			}
+			// A row recorded before the canonicaliser existed may hold the Unicode form
+			// while the input is now punycode (or the other way round). Remove every
+			// stored spelling that canonicalises to the requested domain.
+			targets := map[string]bool{competitor: true}
+			for _, storedDomain := range stored {
+				if normalizeDomain(storedDomain) == competitor {
+					targets[storedDomain] = true
+				}
+			}
+			removed := false
+			for target := range targets {
+				one, err := db.RemoveCompetitor(ctx, project.ID, target)
+				if err != nil {
+					return failf(ExitConfig, "db_write_failed", "%v", err)
+				}
+				removed = removed || one
 			}
 			inConfig := false
 			for _, configured := range cfg.Competitors {
-				if normalizeDomain(configured) == domain {
+				if normalizeDomain(configured) == competitor {
 					inConfig = true
 				}
 			}
 			if a.JSON {
-				return a.PrintJSON(map[string]any{"domain": domain, "removed": removed, "in_config": inConfig})
+				return a.PrintJSON(map[string]any{"domain": competitor, "removed": removed, "in_config": inConfig})
 			}
 			if removed {
-				fmt.Fprintf(a.Out, "removed: %s\n", domain)
+				fmt.Fprintf(a.Out, "removed: %s\n", competitor)
 			} else {
-				fmt.Fprintf(a.Out, "not in the database: %s\n", domain)
+				fmt.Fprintf(a.Out, "not in the database: %s\n", competitor)
 			}
 			if inConfig {
-				fmt.Fprintf(a.Out, "note: %s is also listed in %s; remove it there to stop counting it\n", domain, cfg.Path)
+				fmt.Fprintf(a.Out, "note: %s is also listed in %s; remove it there to stop counting it\n", competitor, cfg.Path)
 			}
 			return nil
 		},
 	}
 }
 
+// normalizeDomain reduces a configured or typed competitor to the form the
+// measurement compares: lower case, no scheme or path, no trailing dot, and IDN
+// labels in punycode. It is the same canonicalisation a citation host goes through
+// (domain.CanonicalHost), so "Example.COM." and "例え.テスト" cannot fail to match
+// the hosts they name.
 func normalizeDomain(value string) string {
 	trimmed := strings.ToLower(strings.TrimSpace(value))
 	trimmed = strings.TrimPrefix(trimmed, "https://")
@@ -161,5 +197,5 @@ func normalizeDomain(value string) string {
 	if index := strings.IndexAny(trimmed, "/"); index >= 0 {
 		trimmed = trimmed[:index]
 	}
-	return strings.TrimSuffix(trimmed, ".")
+	return domain.CanonicalHost(trimmed)
 }

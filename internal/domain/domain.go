@@ -150,6 +150,66 @@ func IsOwnDomain(domain string, ownDomain string, subdomains bool) bool {
 	return subdomains && strings.HasSuffix(host, "."+own)
 }
 
+// RegistrableDomain returns host's registrable domain (eTLD+1) from the public
+// suffix list: "www.rival.example" and "rival.example" are one site, and so are
+// "a.b.example.co.jp" and "example.co.jp". A hosting suffix keeps its customer
+// label ("user.github.io"), because the suffix itself is shared.
+//
+// A host the list cannot resolve ("localhost", an IP address, a public suffix
+// like "github.io" on its own) is returned unchanged: an odd host is still a
+// citation that came back from the provider, and regrouping it would change the
+// denominator.
+func RegistrableDomain(host string) string {
+	canonical := CanonicalHost(host)
+	if canonical == "" {
+		return ""
+	}
+	registrable, err := publicsuffix.EffectiveTLDPlusOne(canonical)
+	if err != nil || registrable == "" {
+		return canonical
+	}
+	return registrable
+}
+
+// AggregationDomain is the domain a citation host is counted under when a report
+// aggregates by site rather than by host.
+//
+// It is the most specific configured domain (ownDomain or one of competitors) that
+// contains host on a label boundary, so registering "example.com" counts
+// "www.example.com" and "blog.example.com" on the same row. When no configured
+// domain contains the host, the host's registrable domain is used.
+//
+// subdomains == false returns the host itself: "exact match only" is a choice about
+// the unit of comparison, so a host is never rolled up into its registrable domain
+// for the key either. The empty string means there is no host to aggregate.
+func AggregationDomain(host string, ownDomain string, subdomains bool, competitors []string) string {
+	canonical := CanonicalHost(host)
+	if canonical == "" {
+		return ""
+	}
+	if !subdomains {
+		return canonical
+	}
+	best := ""
+	consider := func(configured string) {
+		candidate := CanonicalHost(configured)
+		if candidate == "" || len(candidate) <= len(best) {
+			return
+		}
+		if IsOwnDomain(canonical, candidate, true) {
+			best = candidate
+		}
+	}
+	consider(ownDomain)
+	for _, competitor := range competitors {
+		consider(competitor)
+	}
+	if best != "" {
+		return best
+	}
+	return RegistrableDomain(canonical)
+}
+
 // CitationDetail is one citation with the raw and the derived forms kept apart,
 // which is what the citations table stores.
 type CitationDetail struct {

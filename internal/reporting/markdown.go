@@ -87,6 +87,16 @@ func writeConditions(b *strings.Builder, text labels, result *analysis.Result, o
 		b.WriteString(text.brandTermsStatusNote + "\n\n")
 	}
 
+	// A group is provider x model x stage, so a period can put records of different
+	// measurement conditions in one group. The rate is still printed, but the group
+	// must not look like one measurement (D24).
+	for _, group := range result.Groups {
+		if len(group.MixedConditions) == 0 {
+			continue
+		}
+		fmt.Fprintf(b, "> "+text.mixedConditions+"\n\n", group.Label(), strings.Join(group.MixedConditions, "; "))
+	}
+
 	if opts.Config == nil {
 		return
 	}

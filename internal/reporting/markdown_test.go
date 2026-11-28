@@ -46,6 +46,52 @@ func sampleResult(t *testing.T) *analysis.Result {
 
 func stringPointer(value string) *string { return &value }
 
+// A period can put records of different measurement conditions in one group. The
+// rate is still printed, and the report says the average is not one measurement
+// (D24); a period whose conditions agree says nothing.
+func TestBuildReportsAGroupThatMixesConditions(t *testing.T) {
+	base := sqlite.Run{
+		Provider: "openai", Model: "gpt-test", Stage: "smoke",
+		QuestionKey: "Q01", QuestionText: "THCVとは？", Category: "definition",
+		Status: "success", CitationObservability: "observed", CitedOwn: true,
+		StartedAtUTC: "2026-11-12T01:00:00Z", QuestionVersion: "sha:1",
+		APIEndpointVersion: "responses/v1", ToolVersion: "0.1.0+norm3",
+		QuestionSetVersion: "1.0.0", QuestionSetSHA256: "set-a",
+		MeasurementMethod: "official_api", SearchEnabled: true,
+	}
+	first := base
+	first.ID = 1
+	second := base
+	second.ID = 2
+	second.ToolVersion = "0.2.0+norm3"
+	runs := []sqlite.Run{first, second}
+	result := &analysis.Result{
+		Period: analysis.Period{Label: "2026-11-12:2026-11-12"},
+		Runs:   runs,
+		Groups: analysis.Build(runs, nil, analysis.Options{}),
+		Conditions: analysis.Conditions{
+			Providers: []string{"openai"}, Models: []string{"gpt-test"},
+			ToolVersions: []string{"0.1.0+norm3", "0.2.0+norm3"},
+		},
+	}
+
+	en := Build(result, Options{Language: i18n.EN, GeneratedAt: "2026-11-15T00:00:00Z"})
+	want := "**openai/gpt-test/smoke** mixes measurement conditions (tool_version: 0.1.0+norm3, 0.2.0+norm3). Its rate is an average over them, not one measurement."
+	if !strings.Contains(en, want) {
+		t.Errorf("the English report is missing the mixed-condition line:\n%s", en)
+	}
+
+	ja := Build(result, Options{Language: i18n.JA, GeneratedAt: "2026-11-15T00:00:00Z"})
+	if !strings.Contains(ja, "**openai/gpt-test/smoke** は計測条件が混在している（tool_version: 0.1.0+norm3, 0.2.0+norm3）") {
+		t.Errorf("the Japanese report is missing the mixed-condition line:\n%s", ja)
+	}
+
+	clean := Build(sampleResult(t), Options{Language: i18n.EN, GeneratedAt: "2026-11-15T00:00:00Z"})
+	if strings.Contains(clean, "mixes measurement conditions") {
+		t.Error("a period of one measurement must not warn about a mix")
+	}
+}
+
 func TestBuildStartsWithTheSampleStatement(t *testing.T) {
 	result := sampleResult(t)
 	en := Build(result, Options{Language: i18n.EN, GeneratedAt: "2026-11-15T00:00:00Z"})
@@ -117,9 +163,21 @@ func TestBuildListsTheConfiguredConditions(t *testing.T) {
 	result := sampleResult(t)
 	cfg := &config.Config{SiteID: "demo", OwnDomain: "example.shop", Market: "ja-JP", BrandTerms: []string{"Example"}}
 	markdown := Build(result, Options{Config: cfg, Language: i18n.EN, GeneratedAt: "2026-11-15T00:00:00Z"})
-	for _, want := range []string{"Conditions", "responses/v1", "question set", "no citation metadata", "does not say"} {
+	for _, want := range []string{"Conditions", "responses/v1", "question set", "citation metadata not observed (unknown)", "does not say", "counted per site", "The share table below counts hosts"} {
 		if !strings.Contains(markdown, want) {
 			t.Errorf("report does not contain %q", want)
+		}
+	}
+	// Status and observability are separate dimensions, and the report says so.
+	if !strings.Contains(markdown, "appears in both `failure` and `unknown`") {
+		t.Error("the observed note must say a failed run is counted in both dimensions")
+	}
+
+	// The same two notes exist in Japanese, and only the Japanese wording is used.
+	ja := Build(result, Options{Config: cfg, Language: i18n.JA, GeneratedAt: "2026-11-15T00:00:00Z"})
+	for _, want := range []string{"サイト単位で数える", "ホスト単位なので", "引用メタデータ未観測（unknown）"} {
+		if !strings.Contains(ja, want) {
+			t.Errorf("the Japanese report does not contain %q", want)
 		}
 	}
 }

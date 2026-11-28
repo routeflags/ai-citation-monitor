@@ -557,11 +557,202 @@ func TestReportListsBothStatusesWhenThePeriodMixesQuestionSets(t *testing.T) {
 	if !strings.Contains(stdout, "The brand terms are not confirmed yet (proposed).") {
 		t.Errorf("one proposed set is enough for the caution:\n%s", stdout)
 	}
+	// The two sets are also two measurement conditions in one group, and the report
+	// says so (D24).
+	if !strings.Contains(stdout, "mixes measurement conditions (question_set_sha256:") {
+		t.Errorf("a group of two question sets must list the mixed condition:\n%s", stdout)
+	}
 }
 
 // --check and --dry-run are probes: they validate the status and print it, and they
 // write neither the questions nor the question set (a question_sets row would make
 // the report state a status nothing was measured with).
+// A registered competitor is a site, not a host: the citation rate counts its
+// subdomains (D23) while the share table keeps listing the hosts. The `--json`
+// shape is checked because `competitor_rate` is what consumers read.
+func TestReportCountsSubdomainsOfARegisteredCompetitor(t *testing.T) {
+	h := newHarness(t)
+	h.openaiBody = `{
+  "id": "resp_sub",
+  "status": "completed",
+  "output_text": "Rival covers it on two pages.",
+  "output": [
+    {"type": "message", "role": "assistant", "content": [
+      {"type": "output_text", "text": "Rival covers it on two pages.", "annotations": [
+        {"type": "url_citation", "url": "https://www.rival.example/deep", "title": "deep"},
+        {"type": "url_citation", "url": "https://rival.example/apex", "title": "apex"}
+      ]}
+    ]}
+  ],
+  "usage": {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150}
+}`
+	h.importQuestions()
+	if code, _, stderr := h.run("run", "--provider", "openai", "--repeat", "1", "--yes"); code != ExitOK {
+		t.Fatalf("run = %d: %s", code, stderr)
+	}
+
+	code, stdout, stderr := h.run("--json", "report", "--period", "2026-11-15", "--stdout")
+	if code != ExitOK {
+		t.Fatalf("report --json = %d: %s", code, stderr)
+	}
+	var payload struct {
+		Groups []struct {
+			CompetitorRate []struct {
+				Domain string `json:"domain"`
+				Runs   int    `json:"runs"`
+				Rate   struct {
+					N int `json:"n"`
+					D int `json:"d"`
+				} `json:"rate"`
+			} `json:"competitor_rate"`
+		} `json:"groups"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, stdout)
+	}
+	rows := map[string]int{}
+	for _, group := range payload.Groups {
+		for _, row := range group.CompetitorRate {
+			rows[row.Domain] = row.Runs
+			if row.Domain == "rival.example" {
+				if row.Runs != 2 || row.Rate.N != 2 || row.Rate.D != 2 {
+					t.Errorf("rival.example row = %+v, want n=2/2", row)
+				}
+			}
+		}
+	}
+	if rows["rival.example"] != 2 {
+		t.Errorf("rival.example runs = %d, want 2 (apex and www are one site)", rows["rival.example"])
+	}
+	if _, ok := rows["www.rival.example"]; ok {
+		t.Errorf("the rate table must not keep a www.rival.example row: %v", rows)
+	}
+
+	// The Markdown report shows the same two units side by side.
+	code, stdout, stderr = h.run("report", "--period", "2026-11-15", "--stdout")
+	if code != ExitOK {
+		t.Fatalf("report = %d: %s", code, stderr)
+	}
+	for _, want := range []string{
+		"| rival.example | competitor | registered | 100.0% (n=2/2) |",
+		"| www.rival.example | competitor | 2 | 50.0% (n=2/4) |",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("the report is missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
+// A public suffix would absorb every site under it as one competitor row (D23),
+// so registering one is refused; a normal value is canonicalised first.
+func TestCompetitorsAddRejectsAPublicSuffix(t *testing.T) {
+	h := newHarness(t)
+	code, _, stderr := h.run("competitors", "add", "github.io")
+	if code != ExitConfig {
+		t.Fatalf("exit = %d, want %d for a public suffix: %s", code, ExitConfig, stderr)
+	}
+	if !strings.Contains(stderr, "public suffix") {
+		t.Errorf("the error must say why: %s", stderr)
+	}
+
+	code, stdout, stderr := h.run("competitors", "add", " Example.COM. ")
+	if code != ExitOK {
+		t.Fatalf("add = %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "competitor: example.com") {
+		t.Errorf("the stored value must be canonicalised: %s", stdout)
+	}
+	code, list, stderr := h.run("competitors", "list")
+	if code != ExitOK {
+		t.Fatalf("list = %d: %s", code, stderr)
+	}
+	if !strings.Contains(list, "example.com") || strings.Contains(list, "Example.COM.") {
+		t.Errorf("the list must show the canonical name only:\n%s", list)
+	}
+}
+
+// The config and `competitors add` have to canonicalise the same way: a URL or an
+// IDN written in `aicm.toml` must be matched and listed as the host it names.
+func TestNormalizeDomainCanonicalisesInput(t *testing.T) {
+	for input, want := range map[string]string{
+		"https://www.rival.example/path": "www.rival.example",
+		" HTTP://Rival.Example. ":        "rival.example",
+		"例え.テスト":                         "xn--r8jz45g.xn--zckzah",
+		"rival.example":                  "rival.example",
+		"":                               "",
+	} {
+		if got := normalizeDomain(input); got != want {
+			t.Errorf("normalizeDomain(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+// A competitor written as a URL in the config is still the site it names; before
+// the shared canonicaliser it became a row that never matched a citation host.
+func TestConfigCompetitorWrittenAsAURLIsMatched(t *testing.T) {
+	h := newHarness(t)
+	h.importQuestions()
+	configText := readFileString(t, h.configPath)
+	configText = strings.Replace(configText,
+		`competitors = ["rival.example"]`,
+		`competitors = ["https://rival.example/path"]`, 1)
+	if err := os.WriteFile(h.configPath, []byte(configText), 0o644); err != nil {
+		t.Fatalf("rewrite config: %v", err)
+	}
+
+	if code, _, stderr := h.run("run", "--provider", "openai", "--repeat", "1", "--yes"); code != ExitOK {
+		t.Fatalf("run = %d: %s", code, stderr)
+	}
+	code, stdout, stderr := h.run("report", "--period", "2026-11-15", "--stdout")
+	if code != ExitOK {
+		t.Fatalf("report = %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "| rival.example | competitor | registered |") {
+		t.Errorf("the registered competitor must be the canonical host:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "\n| https://rival.example/path") {
+		t.Errorf("a URL must not become a table row:\n%s", stdout)
+	}
+	code, list, stderr := h.run("competitors", "list")
+	if code != ExitOK {
+		t.Fatalf("list = %d: %s", code, stderr)
+	}
+	if !strings.Contains(list, "rival.example") || strings.Contains(list, "https://") {
+		t.Errorf("the list must show the canonical host only:\n%s", list)
+	}
+}
+
+// A row recorded by an older build with a Unicode domain has to stay removable
+// after the canonicaliser started returning punycode.
+func TestCompetitorsRemoveFindsAStoredUnicodeRow(t *testing.T) {
+	h := newHarness(t)
+	insert := h.query(`INSERT INTO competitors (project_id, domain, label, source, created_at)
+		VALUES (1, '例え.テスト', '', 'registered', '2026-11-15T00:00:00Z')`)
+	insert.exec()
+	insert.close()
+
+	code, list, stderr := h.run("competitors", "list")
+	if code != ExitOK {
+		t.Fatalf("list = %d: %s", code, stderr)
+	}
+	if !strings.Contains(list, "xn--r8jz45g.xn--zckzah") {
+		t.Errorf("the list must show the canonical form of a stored row:\n%s", list)
+	}
+
+	code, stdout, stderr := h.run("competitors", "remove", "xn--r8jz45g.xn--zckzah")
+	if code != ExitOK {
+		t.Fatalf("remove = %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "removed:") {
+		t.Errorf("the Unicode row must be found: %s", stdout)
+	}
+	left := h.query(`SELECT COUNT(*) FROM competitors WHERE domain = '例え.テスト'`)
+	defer left.close()
+	if got := left.int64(); got != 0 {
+		t.Errorf("rows left = %d, want 0", got)
+	}
+}
+
 func TestQuestionsImportCheckWritesNeitherQuestionsNorTheQuestionSet(t *testing.T) {
 	h := newHarness(t)
 	path := writeQuestionSet(t, h, questionSetWithStatus("proposed"))

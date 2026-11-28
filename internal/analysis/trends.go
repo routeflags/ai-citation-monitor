@@ -85,6 +85,7 @@ func Trends(runs []sqlite.Run, interval string) ([]TrendSeries, error) {
 	type bucket struct {
 		total, valid, errored, unknown int
 		cited, branded, success        int
+		judged                         int
 	}
 	seriesIndex := map[string]int{}
 	series := []TrendSeries{}
@@ -129,6 +130,11 @@ func Trends(runs []sqlite.Run, interval string) ([]TrendSeries, error) {
 		if run.Status != "success" {
 			continue
 		}
+		// judged counts the citation-rate denominator directly. It used to be
+		// `valid - unknown`, but unknown is status-independent (it includes failed
+		// runs, docs/metrics.md), so a bucket with one unknown success and one
+		// failure produced a negative denominator and printed "not measured".
+		entry.judged++
 		if run.CitedOwn {
 			entry.cited++
 		}
@@ -150,7 +156,7 @@ func Trends(runs []sqlite.Run, interval string) ([]TrendSeries, error) {
 				RunsValid:      entry.valid,
 				RunsError:      entry.errored,
 				RunsUnknown:    entry.unknown,
-				CitedOwn:       NewRate(entry.cited, entry.valid-entry.unknown),
+				CitedOwn:       NewRate(entry.cited, entry.judged),
 				BrandMentioned: NewRate(entry.branded, entry.valid),
 			}
 			if previous == nil {

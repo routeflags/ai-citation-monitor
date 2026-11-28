@@ -21,7 +21,7 @@ number meaningless.
 | Brand mention rate | successful runs where `brand_mentioned = 1` | successful runs in the group |
 | AEO question citation rate | judgeable runs of that question where `cited_own = 1` | judgeable runs of that question |
 | AEO question coverage | questions with at least one judgeable run that cited you | questions with at least one judgeable run |
-| Competitor citation rate | judgeable runs whose citations include that domain | judgeable runs in the group |
+| Competitor citation rate | judgeable runs whose citations include that site (the registered domain, or a subdomain of it when subdomains are included) | judgeable runs in the group |
 | Citation share | citations of that domain | all citations of the group |
 | Trend | per bucket: the rates above | the same denominators, per bucket |
 
@@ -36,8 +36,26 @@ Details that matter:
   anchor on. A term that appears **only inside a longer word** is recorded as an
   ambiguous mention and left out of the rate: unknown, not "not mentioned". The
   report prints that count separately.
+- **Competitor citation rate is counted per site, not per host.** With
+  `subdomains = true`, a citation is attributed to the most specific configured domain
+  (`own_domain` or a competitor) that contains its host, and otherwise to the host's
+  registrable domain (eTLD+1). Registering `example.com` therefore counts
+  `www.example.com` and `blog.example.com` on the same row, which is the same rule
+  `ClassifyDomain` uses. A configured domain deeper than its registrable domain
+  (`blog.example.com`) keeps its own row and does not absorb `shop.example.com`.
+  With `subdomains = false` the row is the exact host, because "exact match only" is a
+  statement about the unit of comparison. A host the public suffix list cannot
+  resolve (`localhost`, an IP address, `github.io` on its own) keeps its own row.
+  A public suffix cannot be registered as a competitor (`aicm competitors add` refuses
+  it), since every customer under it would become one competitor; a value that is
+  already in a config file is still over-matched, which `docs/architecture.md` records
+  as a known limit.
 - **Competitor citation rate does not add up to 100%.** One answer can cite
   several domains, so it is a per-domain rate, not a partition.
+- **Citation share counts hosts, not sites.** `example.com` and `www.example.com` are
+  two rows there even when the competitor rate counts them as one site. The two tables
+  answer different questions ("how many answers cited this site" versus "where did the
+  citations point"), so they have different denominators: judgeable runs and citations.
 - **Citation share counts malformed citations as one each.** A URL without a host
   still came back from the provider, so dropping it would make the shares disagree
   with the citation counts. It appears as `(no host)` in the report. The denominator
@@ -93,8 +111,41 @@ When a period mixes sets with different statuses, every status is listed
 |---|---|
 | The call failed (provider error, transport error) | `status = error`, counted in the report, excluded from every denominator |
 | The call was cancelled (Ctrl+C) | `status = cancelled`, counted, excluded |
-| The answer arrived but the provider returned no citation metadata | `citation_observability = unknown`, counted, excluded from citation rates (but included in the brand mention rate) |
+| The citation metadata was not observed (the call failed, or the answer arrived without it) | `citation_observability = unknown`, counted, excluded from citation rates (but included in the brand mention rate when the answer exists) |
 | The answer text is empty | treated as a failed fetch (`error_code = empty_answer`), not as "no citation" |
+
+### Status and observability are separate dimensions
+
+The status columns and the unknown column are **not** a partition of the same runs:
+
+- `runs_total = success + error + cancelled`, and each run is in exactly one of those.
+- `runs_unknown` counts the runs whose citation metadata was not observed, **whatever
+  their status**. A failed call usually has no observed citation metadata (no answer
+  arrived), so it appears in `error` *and* `unknown`; a failed response that did carry
+  citation metadata appears only in `error`.
+- The citation-rate denominator is `success` **and** `observed`; the brand-mention
+  denominator is every `success`.
+
+A rate is therefore never a statement about unknown runs: unknown is an exclusion
+reason, not a third status. If you want "answers that arrived but could not be judged",
+read `success` together with `citation_observability`.
+
+## Groups that mix measurement conditions
+
+A group is `provider x model x stage`, so a period can put records of different
+measurement conditions in one group: another question set, another API endpoint
+version, or another `tool_version` (which carries the normaliser version). The rate is
+still computed over the group's runs — it describes what was observed — but the group
+is not one measurement, and the report says so.
+
+`mixed_conditions` in `report --json` lists the fields that differ, for example
+`tool_version: 0.1.0+norm3, 0.2.0+norm3`. The Markdown report prints the same line under
+**Conditions**, keyed by the group label. An empty recorded value counts as a value of
+its own and is printed as `—`: a run made without a question set was not measured with
+the set the other runs name.
+
+This is the same identity `aicm compare` uses to refuse a delta between periods
+(`api_endpoint_version`, `question_set_sha256`, `tool_version`).
 
 ## Comparing periods
 

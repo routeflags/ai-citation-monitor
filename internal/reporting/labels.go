@@ -7,6 +7,7 @@ import "github.com/routeflags/ai-citation-monitor/internal/i18n"
 type labels struct {
 	title, generated                                                                                       string
 	conditionsH, conditionsNote, item, value                                                               string
+	mixedConditions                                                                                        string
 	provider, model, stage, endpoint, search, method, qsVersion, qsSha, normVersion, observedRange         string
 	brandTermsStatus, brandTermsStatusProposed, brandTermsStatusConfirmed, brandTermsStatusNotDeclared     string
 	brandTermsStatusNote                                                                                   string
@@ -32,8 +33,12 @@ var enLabels = labels{
 	title:       "AI citation report (%s)",
 	generated:   "Generated: %s (UTC). Period boundaries are JST (%s inclusive to %s exclusive)",
 	conditionsH: "Conditions",
-	conditionsNote: "**Conditions read from the records.** This is where the numbers come from; records " +
-		"with different conditions are never put in the same table.",
+	conditionsNote: "**Conditions read from the records.** This is where the numbers come " +
+		"from. A group is provider x model x stage, so records with different conditions " +
+		"can meet in it; such a group lists the fields that differ (`mixed_conditions`) " +
+		"and its rate is not one measurement.",
+	mixedConditions: "**%s** mixes measurement conditions (%s). Its rate is an average " +
+		"over them, not one measurement.",
 	item: "item", value: "value",
 	provider: "provider", model: "model", stage: "stage",
 	endpoint: "API endpoint version", search: "search enabled", method: "measurement method",
@@ -55,9 +60,11 @@ var enLabels = labels{
 	brandTermsMissing: "No brand terms are configured, so the brand mention rate is `— (not measured)`.",
 	observedH:         "Observed",
 	observedNote: "Counts before aggregation. Failures and unknown runs are excluded from the " +
-		"denominators but still counted here.",
+		"denominators but still counted here. Status and citation observability are separate " +
+		"dimensions: a failed call usually has no observed citation metadata either, so it appears in " +
+		"both `failure` and `unknown`.",
 	run: "runs", success: "success", failure: "failure", cancelled: "cancelled",
-	unknown: "unknown", unknownRuns: "no citation metadata (unknown)", count: "count",
+	unknown: "unknown", unknownRuns: "citation metadata not observed (unknown)", count: "count",
 	noRuns:   "No runs in this period (`— (not measured)`).",
 	derivedH: "Derived",
 	derivedNote: "The denominator of a citation rate is \"runs that succeeded and returned citation " +
@@ -77,13 +84,18 @@ var enLabels = labels{
 	coveredQs:        "questions with an own citation", unmeasuredQs: "questions not measured",
 	unknownOnlyQs: "questions with unknown answers only",
 	competitorH:   "GEO: citation rate per domain",
-	competitorNote: "The denominator is the valid runs of the same group. One answer can cite " +
-		"several domains, so the column does not add up to 100%.",
+	competitorNote: "The rate is counted per site: your registered competitor domain, or the site a " +
+		"citation host belongs to when subdomains are included (`subdomains = false` counts the " +
+		"exact host). The denominator is the valid runs of the same group, and one answer can " +
+		"cite several sites, so the column does not add up to 100%. The share table below counts " +
+		"hosts, so the two tables use different units.",
 	domain: "domain", classification: "class", registeredCol: "registered",
 	registered: "registered", notRegistered: "observed only", runRate: "citation rate",
 	shareH: "GEO: citation share",
 	shareNote: "The denominator is the total number of citations in the group (a URL without a " +
-		"host still counts as one). The scope of the denominator is printed per group.",
+		"host still counts as one). The scope of the denominator is printed per group. Rows are " +
+		"hosts, so this table can split one site across several rows where the citation rate " +
+		"above counts it once (`docs/metrics.md`).",
 	citationCount: "citations", share: "share", noCitation: "— (no citation)",
 	compareH: "Period comparison",
 	compareNote: "`%s` -> `%s`. Differences are in percentage points. Rows whose conditions " +
@@ -100,7 +112,7 @@ var enLabels = labels{
 		"Causality (\"citations grew because of X\") or interpretation. The numbers are observation and derivation only.",
 		"Totals across providers, models or stages (the denominator stays inside a group).",
 		"Answer correctness against a ground truth (out of scope for this tool).",
-		"Values that treat unknown (no citation metadata was returned) as zero citations.",
+		"Values that treat unknown (citation metadata was not observed) as zero citations.",
 		"The consumer ChatGPT / Gemini UI. This is a sample observed through the official API.",
 	},
 	notMeasured: "`— (not measured)`", none: "none",
@@ -108,11 +120,15 @@ var enLabels = labels{
 }
 
 var jaLabels = labels{
-	title:          "AI 引用計測レポート（%s）",
-	generated:      "生成: %s（UTC）。期間の区切りは JST（%s 以上 %s 未満）",
-	conditionsH:    "条件",
-	conditionsNote: "**記録から読んだ条件。** ここが数字の出所で、条件の違う記録は同じ表に入れない。",
-	item:           "項目", value: "値",
+	title:       "AI 引用計測レポート（%s）",
+	generated:   "生成: %s（UTC）。期間の区切りは JST（%s 以上 %s 未満）",
+	conditionsH: "条件",
+	conditionsNote: "**記録から読んだ条件。** ここが数字の出所。グループは provider × model × " +
+		"stage なので、条件の違う記録が同じグループに入り得る。その場合は混在した項目" +
+		"（`mixed_conditions`）を明示し、その率は 1 つの測定ではない。",
+	mixedConditions: "**%s** は計測条件が混在している（%s）。率はそれらの平均であり、" +
+		"1 つの測定ではない。",
+	item: "項目", value: "値",
 	provider: "プロバイダー", model: "モデル", stage: "stage",
 	endpoint: "API エンドポイント版", search: "検索の有効化", method: "測定方法",
 	qsVersion: "質問セット版", qsSha: "質問セット sha256", normVersion: "正規化仕様の版",
@@ -131,9 +147,11 @@ var jaLabels = labels{
 	subdomainsIncluded: "（サブドメインを含む）", exactOnly: "（完全一致のみ）",
 	brandTermsMissing: "ブランド語が未設定のため、ブランド言及率は `—（未測定）` になる。",
 	observedH:         "観測（OBSERVED）",
-	observedNote:      "集計前の件数。失敗と unknown は分母から外すが、件数としてはここに出る。",
-	run:               "run", success: "成功", failure: "失敗", cancelled: "中断",
-	unknown: "unknown", unknownRuns: "引用メタデータなし（unknown）", count: "件数",
+	observedNote: "集計前の件数。失敗と unknown は分母から外すが、件数としてはここに出る。" +
+		"状態（status）と引用の観測（observability）は別の次元で、失敗した run もふつう引用メタデータは" +
+		"観測されていないため、`failure` と `unknown` の両方に出る。",
+	run: "run", success: "成功", failure: "失敗", cancelled: "中断",
+	unknown: "unknown", unknownRuns: "引用メタデータ未観測（unknown）", count: "件数",
 	noRuns:   "この期間に run が無い（`—（未測定）`）。",
 	derivedH: "導出（DERIVED）",
 	derivedNote: "率の分母は「成功し、かつ引用メタデータが返った run」。n は分母。`—（未測定）` " +
@@ -151,13 +169,16 @@ var jaLabels = labels{
 	coveredQs:        "自社引用があった質問", unmeasuredQs: "未計測の質問",
 	unknownOnlyQs: "unknown のみの質問",
 	competitorH:   "GEO: ドメイン別 引用獲得率",
-	competitorNote: "分母は同じグループの有効 run。1 つの回答が複数ドメインを引用するので、" +
-		"合計は 100% を超え得る。",
+	competitorNote: "率はサイト単位で数える（登録した競合ドメイン、またはサブドメインを含む設定なら" +
+		"引用元ホストが属するサイト。`subdomains = false` なら完全一致のホスト）。分母は同じグループの" +
+		"有効 run で、1 つの回答が複数サイトを引用するため合計は 100% を超え得る。下の引用シェア表は" +
+		"ホスト単位なので、2 つの表は単位が違う。",
 	domain: "ドメイン", classification: "区分", registeredCol: "登録",
 	registered: "登録済み", notRegistered: "観測のみ", runRate: "引用獲得率",
 	shareH: "GEO: 引用シェア",
 	shareNote: "分母はそのグループの引用総件数（ホストが取れない URL も 1 件として数える）。" +
-		"分母のスコープはグループ内で閉じている。",
+		"分母のスコープはグループ内で閉じている。行はホスト単位なので、上の獲得率が 1 行にまとめる" +
+		"サイトをここでは複数行に分けることがある（`docs/metrics.md`）。",
 	citationCount: "引用件数", share: "シェア", noCitation: "—（引用なし）",
 	compareH:    "期間比較",
 	compareNote: "`%s` → `%s`。差は percentage points。条件が違う行は差を出さない。",
@@ -173,7 +194,7 @@ var jaLabels = labels{
 		"因果（「引用が増えたのは○○のため」）と解釈。数値は観測と導出だけ。",
 		"プロバイダー・モデル・stage をまたいだ合計値（分母はグループで閉じる）。",
 		"回答の正確さ（正解データとの照合が必要で、このツールの範囲外）。",
-		"unknown（引用メタデータが返らなかった run）を「引用ゼロ」として扱った値。",
+		"unknown（引用メタデータが観測できなかった run）を「引用ゼロ」として扱った値。",
 		"一般向け ChatGPT / Gemini 画面の値。API で観測した標本に限る。",
 	},
 	notMeasured: "`—（未測定）`", none: "なし",

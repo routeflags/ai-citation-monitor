@@ -84,6 +84,17 @@ func New(timeout time.Duration, rpm int, maxRetries int) *Client {
 	return client
 }
 
+// maxBodyBytes caps a response body: a provider answer with its citations is far
+// smaller, and the cap keeps a misbehaving endpoint from making the tool read an
+// unbounded stream into memory.
+const maxBodyBytes = 16 << 20
+
+// ErrResponseTooLarge reports a response body above maxBodyBytes. It is returned
+// without a retry: the same call would return the same oversized body, and a
+// truncated body would reach the adapter as a JSON error that hides the real
+// cause.
+var ErrResponseTooLarge = errors.New("response body exceeds the size limit")
+
 func sleepContext(ctx context.Context, d time.Duration) error {
 	timer := time.NewTimer(d)
 	defer timer.Stop()
@@ -147,7 +158,7 @@ func (c *Client) Do(ctx context.Context, req Request) (*Response, error) {
 			}
 			continue
 		}
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes+1))
 		resp.Body.Close()
 		if readErr != nil {
 			lastErr = fmt.Errorf("read body: %w", readErr)
@@ -155,6 +166,9 @@ func (c *Client) Do(ctx context.Context, req Request) (*Response, error) {
 		}
 		result := &Response{Status: resp.StatusCode, Header: resp.Header, Body: body, Attempts: attempt + 1}
 		if retryableStatus(resp.StatusCode) && attempt < c.MaxRetries {
+			// The retry decision comes before the size check: an answer that says "the
+			// server is busy" is worth another attempt whatever its body size, and the
+			// body of a retried attempt is discarded anyway.
 			if wait, ok := retryAfter(resp.Header, c.Now()); ok {
 				if c.Logf != nil {
 					c.Logf("server asked to wait %s (HTTP %d)", wait.Round(time.Millisecond), resp.StatusCode)
@@ -163,6 +177,12 @@ func (c *Client) Do(ctx context.Context, req Request) (*Response, error) {
 			}
 			lastErr = fmt.Errorf("http %d: %s", resp.StatusCode, snippet(body))
 			continue
+		}
+		if len(body) > maxBodyBytes {
+			// One byte past the cap is read, so the real size is only known to be
+			// larger than the limit. The body is not retried: its size does not depend
+			// on the attempt.
+			return nil, fmt.Errorf("%w: more than %d bytes", ErrResponseTooLarge, maxBodyBytes)
 		}
 		return result, nil
 	}

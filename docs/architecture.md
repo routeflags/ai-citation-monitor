@@ -142,7 +142,10 @@ without a second concept.
 - `runs.status`: `success` / `error` / `cancelled`. A failed call is a row.
 - `runs.citation_observability`: `observed` (the provider returned citation
   metadata, possibly empty) or `unknown` (it returned none). `unknown` is excluded
-  from citation-rate denominators and counted in the report.
+  from citation-rate denominators and counted in the report. Status and observability
+  are separate dimensions: a run is in exactly one status, and a failed run normally
+  has no observed citation metadata either, so it is counted in both `error` and
+  `unknown` (`docs/metrics.md`).
 
 ## What counts as your site
 
@@ -159,8 +162,34 @@ into every run as part of `tool_version`).
   is a configuration error (exit 2): every customer under that suffix would count as
   one site, and the citation rate would be meaningless. The check uses
   `golang.org/x/net/publicsuffix`, including the private section (hosting suffixes).
-- **Known limit**: a public suffix in `competitors` is not rejected, only
-  `own_domain` is. Registering `co.jp` as a competitor would over-match the same way.
+- **Known limit**: a public suffix in `competitors` is not rejected by the config
+  loader, only `own_domain` is. Registering `co.jp` in `aicm.toml` would over-match the
+  same way. `aicm competitors add` does refuse a public suffix, because a competitor row
+  stands for a whole site (D23).
+
+## What a competitor row stands for
+
+The competitor citation rate is counted per site, while the citation share table is
+counted per host. `domain.AggregationDomain` decides a citation's row: with
+`subdomains = true` it is the most specific configured domain (`own_domain` or a
+competitor) that contains the host, and otherwise the host's registrable domain
+(eTLD+1, from `golang.org/x/net/publicsuffix`). With `subdomains = false` the row is the
+exact host, because that setting is about the unit of comparison. The same function
+decides the row of a configured competitor, so a registration deeper than its
+registrable domain stays its own row instead of absorbing its siblings (D23).
+
+## Measurement identity
+
+`analysis.MeasurementIdentity` is the set of conditions a rate has to share before it
+can be read as the same measurement: `api_endpoint_version`, `tool_version`,
+`question_set_version` and `question_set_sha256`. `compare` refuses a delta when two
+periods differ on three of them (`api_endpoint_version`, `question_set_sha256`,
+`tool_version`; an empty value counts as absent, not as a difference), and `Build`
+records every identity field that differs inside one group as `mixed_conditions`
+instead of pretending the average is one measurement. The group key stays
+`provider x model x stage` (invariant 2), so the rates keep their denominator and the
+mix is visible rather than silently removed (D24). `trends` does not yet compare
+conditions between buckets.
 
 ## Integrity
 
