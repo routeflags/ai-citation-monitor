@@ -722,6 +722,43 @@ func TestInitRejectsAPublicSuffixCompetitor(t *testing.T) {
 	}
 }
 
+// The repair path for an existing configuration: `init --force` does not edit the
+// invalid value in place, and refuses while it is still there; a valid --competitors
+// list rewrites the file. No database row is touched either way (D26).
+func TestInitForceRepairsAnInvalidCompetitor(t *testing.T) {
+	h := newHarness(t)
+	configText := readFileString(t, h.configPath)
+	configText = strings.Replace(configText, `competitors = ["rival.example"]`, `competitors = ["co.jp"]`, 1)
+	if err := os.WriteFile(h.configPath, []byte(configText), 0o644); err != nil {
+		t.Fatalf("rewrite config: %v", err)
+	}
+	before, err := os.ReadFile(h.configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+
+	code, _, stderr := h.run("init", "--non-interactive", "--force", "--site-id", "demo", "--own-domain", "example.shop")
+	if code != ExitConfig {
+		t.Fatalf("init --force = %d, want %d: %s", code, ExitConfig, stderr)
+	}
+	after, err := os.ReadFile(h.configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Error("a refused init must leave the file alone")
+	}
+
+	code, _, stderr = h.run("init", "--non-interactive", "--force", "--site-id", "demo",
+		"--own-domain", "example.shop", "--competitors", "rival.example")
+	if code != ExitOK {
+		t.Fatalf("repaired init = %d: %s", code, stderr)
+	}
+	if got := readFileString(t, h.configPath); !strings.Contains(got, `competitors = ["rival.example"]`) || strings.Contains(got, "co.jp") {
+		t.Errorf("the rewritten config must hold the replacement:\n%s", got)
+	}
+}
+
 // A row that an older build accepted is not deleted, but `competitors list` has to
 // say that it is invalid and why. The JSON addition is additive: the existing
 // competitors object keeps its shape.
@@ -764,8 +801,6 @@ func TestCompetitorsListMarksExistingInvalidRows(t *testing.T) {
 	}
 }
 
-// A competitor written as a URL in the config is still the site it names; before
-// the shared canonicaliser it became a row that never matched a citation host.
 func TestConfigCompetitorWrittenAsAURLIsMatched(t *testing.T) {
 	h := newHarness(t)
 	h.importQuestions()
@@ -780,6 +815,14 @@ func TestConfigCompetitorWrittenAsAURLIsMatched(t *testing.T) {
 	if code, _, stderr := h.run("run", "--provider", "openai", "--repeat", "1", "--yes"); code != ExitOK {
 		t.Fatalf("run = %d: %s", code, stderr)
 	}
+	// The record is classified when it is written, before any report: a URL in the
+	// config must already be the canonical host at that point (D26).
+	recorded := h.query(`SELECT COUNT(*) FROM citations WHERE hostname = 'rival.example' AND source_type = 'competitor'`)
+	defer recorded.close()
+	if got := recorded.int64(); got != 2 {
+		t.Errorf("citations recorded as competitor = %d, want 2 (one per run)", got)
+	}
+
 	code, stdout, stderr := h.run("report", "--period", "2026-11-15", "--stdout")
 	if code != ExitOK {
 		t.Fatalf("report = %d: %s", code, stderr)

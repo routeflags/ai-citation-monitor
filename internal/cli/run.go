@@ -214,12 +214,14 @@ func (a *App) runMeasure(cmd *cobra.Command, opts runOptions) error {
 	}
 
 	engine := &runner.Runner{
-		DB:                 db,
-		ProjectID:          project.ID,
-		OwnDomain:          project.OwnDomain,
-		Subdomains:         project.Subdomains,
-		BrandTerms:         cfg.BrandTerms,
-		Competitors:        cfg.Competitors,
+		DB:         db,
+		ProjectID:  project.ID,
+		OwnDomain:  project.OwnDomain,
+		Subdomains: project.Subdomains,
+		BrandTerms: cfg.BrandTerms,
+		// The runner classifies each citation when it records it, so a URL written
+		// in the config has to be canonical before it gets there (D26).
+		Competitors:        configuredCompetitors(cfg.Competitors),
 		Concurrency:        concurrency,
 		Session:            session,
 		HashOnlyBody:       !storeBody,

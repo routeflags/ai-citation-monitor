@@ -9,6 +9,27 @@ import (
 	"github.com/routeflags/ai-citation-monitor/internal/domain"
 )
 
+// configuredCompetitors canonicalises the configured competitor list the same way
+// `competitors add`, the config validator and report-time matching do, dropping empty
+// values and duplicates in a fixed order. The runner classifies citations when it
+// records them, so the list has to be canonical before it gets there too: otherwise a
+// URL written in the config would be "other" in the record and "competitor" in the
+// report (D26).
+func configuredCompetitors(configured []string) []string {
+	seen := map[string]bool{}
+	names := make([]string, 0, len(configured))
+	for _, value := range configured {
+		canonical := domain.CanonicalConfiguredDomain(value)
+		if canonical == "" || seen[canonical] {
+			continue
+		}
+		seen[canonical] = true
+		names = append(names, canonical)
+	}
+	sort.Strings(names)
+	return names
+}
+
 func (a *App) competitorsCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "competitors",
