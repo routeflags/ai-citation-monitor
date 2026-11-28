@@ -44,7 +44,7 @@ Download the archive for your platform from the [latest release](https://github.
 Check the archive against the published checksum before running it:
 
 ```bash
-VERSION=0.2.0                                       # the release you downloaded
+VERSION=0.3.0                                       # the release you downloaded
 ARCHIVE=ai-citation-monitor_${VERSION}_darwin_arm64.tar.gz   # your platform
 
 grep "$ARCHIVE" checksums.txt | shasum -a 256 -c -  # Linux: ... | sha256sum -c -
@@ -53,7 +53,7 @@ mkdir -p ~/.local/bin && install -m 0755 aicm ~/.local/bin/aicm   # or: sudo ins
 aicm version
 ```
 
-The archive has no directory level: it holds `aicm`, `LICENSE`, the READMEs, `docs/` and `examples/`. On Windows, compare `(Get-FileHash .\ai-citation-monitor_0.2.0_windows_amd64.zip -Algorithm SHA256).Hash` with the line in `checksums.txt`, expand the `.zip`, and put the folder on your `PATH`.
+The archive has no directory level: it holds `aicm`, `LICENSE`, the READMEs, `docs/` and `examples/`. On Windows, compare `(Get-FileHash .\ai-citation-monitor_0.3.0_windows_amd64.zip -Algorithm SHA256).Hash` with the line in `checksums.txt`, expand the `.zip`, and put the folder on your `PATH`.
 
 ### With Go
 

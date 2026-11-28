@@ -6,37 +6,44 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-28
+
 ### Added
 
-- **Styled terminal output** (`charm.land/lipgloss/v2`). The human output on
-  stdout now carries weight and colour for structure: table headers and the
-  label column of the `run` plan are bold, a rising citation or mention rate is
-  green, a falling one red, and a rate with no measurement is dim. The styling
-  adds escapes only — the text and the column widths are identical with and
-  without it, so a piped or logged transcript reads exactly like the terminal.
-- Colour is used only when stdout is a terminal. `--json` and stderr are never
-  styled, and `--no-color`, `NO_COLOR` and `TERM=dumb` turn it off. `--no-color`
-  is the new global flag for the same opt-out.
-- **Measurement conditions per trend bucket.** `aicm trends --json` points now carry
-  `identities` (the measurement identities recorded in the bucket, distinct) and
-  `mixed_conditions` (the identity fields that differ inside one bucket), so a
-  consumer can tell a bucket that averaged two tool versions from one measurement.
-- `aicm competitors list --json` adds `invalid`: the registered values that are public
-  suffixes and would over-match. The existing `competitors` object is unchanged.
+- Styled human-readable terminal output with `--no-color`, `NO_COLOR`, and
+  `TERM=dumb` support. JSON and stderr remain unstyled.
+- `aicm trends --json` now includes each bucket's distinct `identities` and
+  `mixed_conditions`; `aicm competitors list --json` adds `invalid` without
+  changing the existing `competitors` object.
+- Permanent exhaustive rounding coverage for all 4,504,500 `(n, d)` pairs with
+  `n ≤ d ≤ 3000`, checked against an independent integer oracle.
 
 ### Changed
 
-- **A public suffix in `competitors` is a configuration error (exit 2).** It was
-  already refused by `competitors add`, but a value written in `aicm.toml` or passed to
-  `aicm init --competitors` was accepted and then counted every site under the suffix
-  as one competitor. Existing rows in the `competitors` table are not deleted;
-  `competitors list` marks them, and read-only commands keep working so existing data
-  stays readable.
-- **`aicm trends` prints no delta across different measurement conditions.** When
-  `api_endpoint_version`, `question_set_sha256` or `tool_version` changes between
-  adjacent buckets, the bucket keeps its rate and `n` but the delta is the unmeasured
-  mark with `reason = conditions_differ` — the rule `compare` already applied between
-  periods. `n_differs` is unchanged and is reported when the conditions agree.
+- **Competitor citation rates are attributed per site, not per cited host.** A
+  registered domain now includes its subdomains when configured; citation share
+  remains host-based. This changes the values in
+  `aicm report --json` `competitor_rate[].domain` (for example,
+  `www.rival.example` may now be attributed to `rival.example`).
+- Reports expose `mixed_conditions` when a group contains different measurement
+  identities rather than presenting the average as one measurement.
+- A public suffix in `competitors` is a configuration error (exit 2). Existing
+  database rows are preserved; `competitors list` marks invalid values and
+  read-only commands remain usable.
+- `aicm trends` suppresses deltas across adjacent buckets when
+  `api_endpoint_version`, `question_set_sha256`, or `tool_version` differs,
+  using `reason = conditions_differ`. `n_differs` is unchanged when conditions
+  match.
+- Error status and citation observability are explicitly separate dimensions;
+  failed and unobserved runs may appear in both counts.
+
+### Fixed
+
+- Detect provider response bodies exceeding the 16 MiB limit instead of passing
+  truncated JSON to adapters.
+- Correct trend denominators when failed and citation-unknown runs share a bucket.
+- Use `int64` for rate-rounding arithmetic to match the proof model's integer
+  range.
 
 ## [0.2.0] - 2026-11-28
 
@@ -124,6 +131,7 @@ All notable changes to this project are documented here. The format follows
 
 - Brand terms match on word boundaries rather than by length.
 
+[0.3.0]: https://github.com/routeflags/ai-citation-monitor/releases/tag/v0.3.0
 [0.2.0]: https://github.com/routeflags/ai-citation-monitor/releases/tag/v0.2.0
 [0.1.3]: https://github.com/routeflags/ai-citation-monitor/releases/tag/v0.1.3
 [0.1.2]: https://github.com/routeflags/ai-citation-monitor/releases/tag/v0.1.2
