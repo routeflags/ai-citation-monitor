@@ -14,18 +14,22 @@ linters:
     - misspell
     # A function that no longer fits one review pass is where a rule gets lost.
     # The two gates measure different things: gocyclo counts branches, gocognit
-    # weights them by nesting. Both thresholds sit at or above the 95th percentile
-    # of the distribution this codebase had when they were introduced (19 branches,
-    # 30 points), so ordinary code is untouched and the tail is forced to split:
-    # the ten functions that exceeded them were split in the same change. gocyclo is
-    # the tighter of the two because its scores are smaller: in this codebase
-    # cognitive complexity runs about 1.5x the branch count, so 25 and 30 express
-    # roughly the same ceiling.
+    # weights them by nesting. Both are set where the tail has already been cut to
+    # fit: 25 branches was the first baseline, and the ten functions above it were
+    # split when the gate was introduced. gocyclo is now 20 because the three
+    # functions that were still above it (two provider tests at 22 and 23, and
+    # InsertRun at 21) were split in this change; 20 is one branch below the
+    # smallest of those, so a checklist that grows back to that size fails next
+    # time. Ordinary code is untouched either way: nothing left in the codebase
+    # scores above 19 branches. gocognit stays at 30 because it catches the other
+    # shape, a deep nest with few branches, and the two ceilings bound the same
+    # functions from different directions (the tail here runs 15-19 branches and
+    # up to 30 points).
     - gocyclo
     - gocognit
   settings:
     gocyclo:
-      min-complexity: 25
+      min-complexity: 20
     gocognit:
       min-complexity: 30
     errcheck:

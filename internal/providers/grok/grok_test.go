@@ -117,6 +117,38 @@ func ask(t *testing.T, client *Client) providers.Result {
 	return result
 }
 
+// assertTokens checks the token counts the provider reported. They stay pointers
+// in the result because "no usage was sent" is not a zero: a count read as 0
+// would be invented evidence.
+func assertTokens(t *testing.T, usage providers.Usage, input, output, total int) {
+	t.Helper()
+	assertCount(t, "input tokens", usage.InputTokens, input)
+	assertCount(t, "output tokens", usage.OutputTokens, output)
+	assertCount(t, "total tokens", usage.TotalTokens, total)
+}
+
+// assertToolCalls checks the web search count and names where it has to come
+// from: the adapter reads one documented field and never adds up the others.
+func assertToolCalls(t *testing.T, got *int, want int, source string) {
+	t.Helper()
+	switch {
+	case got == nil:
+		t.Errorf("tool calls = nil, want %d (%s)", want, source)
+	case *got != want:
+		t.Errorf("tool calls = %d, want %d (%s)", *got, want, source)
+	}
+}
+
+func assertCount(t *testing.T, name string, got *int, want int) {
+	t.Helper()
+	switch {
+	case got == nil:
+		t.Errorf("%s = nil, want %d", name, want)
+	case *got != want:
+		t.Errorf("%s = %d, want %d", name, *got, want)
+	}
+}
+
 func TestAskTakesCitationsFromAnnotations(t *testing.T) {
 	client := newTestClient(t, serveFixture(t, http.StatusOK, "testdata/cited.json"))
 	result := ask(t, client)
@@ -146,18 +178,8 @@ func TestAskTakesCitationsFromAnnotations(t *testing.T) {
 	if !strings.Contains(result.AnswerText, "Example Shop explains THCV") {
 		t.Errorf("answer text = %q", result.AnswerText)
 	}
-	if result.Usage.InputTokens == nil || *result.Usage.InputTokens != 1204 {
-		t.Errorf("input tokens = %v", result.Usage.InputTokens)
-	}
-	if result.Usage.OutputTokens == nil || *result.Usage.OutputTokens != 268 {
-		t.Errorf("output tokens = %v", result.Usage.OutputTokens)
-	}
-	if result.Usage.TotalTokens == nil || *result.Usage.TotalTokens != 1472 {
-		t.Errorf("total tokens = %v, want the reported 1472", result.Usage.TotalTokens)
-	}
-	if result.Usage.ToolCalls == nil || *result.Usage.ToolCalls != 1 {
-		t.Errorf("tool calls = %v, want 1 (server_side_tool_usage_details.web_search_calls)", result.Usage.ToolCalls)
-	}
+	assertTokens(t, result.Usage, 1204, 268, 1472)
+	assertToolCalls(t, result.Usage.ToolCalls, 1, "server_side_tool_usage_details.web_search_calls")
 	if result.HTTPStatus != http.StatusOK {
 		t.Errorf("http status = %d", result.HTTPStatus)
 	}
@@ -196,9 +218,7 @@ func TestAskSearchWithoutCitationsIsObservedZero(t *testing.T) {
 	if len(result.Citations) != 0 {
 		t.Errorf("citations = %d, want 0", len(result.Citations))
 	}
-	if result.Usage.ToolCalls == nil || *result.Usage.ToolCalls != 1 {
-		t.Errorf("tool calls = %v", result.Usage.ToolCalls)
-	}
+	assertToolCalls(t, result.Usage.ToolCalls, 1, "server_side_tool_usage_details.web_search_calls")
 }
 
 func TestAskDoesNotCountTheTopLevelCitationsArray(t *testing.T) {
@@ -460,9 +480,7 @@ func TestAskWithoutCitationMetadataIsUnknown(t *testing.T) {
 	if result.Observability != providers.ObservabilityUnknown {
 		t.Errorf("observability = %s, want unknown when the response carries no citation metadata", result.Observability)
 	}
-	if result.Usage.ToolCalls == nil || *result.Usage.ToolCalls != 0 {
-		t.Errorf("tool calls = %v, want 0 (no search ran)", result.Usage.ToolCalls)
-	}
+	assertToolCalls(t, result.Usage.ToolCalls, 0, "no search ran")
 	// The fixture reports no total_tokens: the adapter records what the provider
 	// sent and never adds one up.
 	if result.Usage.TotalTokens != nil {
@@ -484,9 +502,7 @@ func TestAskCountsVisibleSearchItemsWhenUsageOmitsThem(t *testing.T) {
 	if result.Status != providers.StatusSuccess {
 		t.Fatalf("status = %s (%s)", result.Status, result.ErrorCode)
 	}
-	if result.Usage.ToolCalls == nil || *result.Usage.ToolCalls != 2 {
-		t.Errorf("tool calls = %v, want the two visible web_search_call items", result.Usage.ToolCalls)
-	}
+	assertToolCalls(t, result.Usage.ToolCalls, 2, "the two visible web_search_call items")
 }
 
 func TestAskUsesTheWebSearchCountNotTheToolTotal(t *testing.T) {
@@ -508,9 +524,7 @@ func TestAskUsesTheWebSearchCountNotTheToolTotal(t *testing.T) {
 	if result.Status != providers.StatusSuccess {
 		t.Fatalf("status = %s (%s)", result.Status, result.ErrorCode)
 	}
-	if result.Usage.ToolCalls == nil || *result.Usage.ToolCalls != 1 {
-		t.Errorf("tool calls = %v, want 1 (web_search_calls, not the server-side tool total)", result.Usage.ToolCalls)
-	}
+	assertToolCalls(t, result.Usage.ToolCalls, 1, "web_search_calls, not the server-side tool total")
 	if len(result.Citations) != 0 {
 		t.Errorf("citations = %d, want 0: a source the search saw is not a citation", len(result.Citations))
 	}

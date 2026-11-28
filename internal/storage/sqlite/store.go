@@ -24,10 +24,7 @@ func ContentVersion(text string) string {
 // EnsureProject inserts or refreshes the project row and returns its id.
 func (d *DB) EnsureProject(ctx context.Context, p Project) (int64, error) {
 	now := NowUTC()
-	subdomains := 0
-	if p.Subdomains {
-		subdomains = 1
-	}
+	subdomains := boolInt(p.Subdomains)
 	if _, err := d.sql.ExecContext(ctx, `
 		INSERT INTO projects (site_id, name, own_domain, subdomains, market, language, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -275,20 +272,35 @@ func (d *DB) InsertRun(ctx context.Context, w RunWrite) (runID int64, inserted b
 		return 0, false, scanErr
 	}
 
-	searchEnabled := 0
-	if w.SearchEnabled {
-		searchEnabled = 1
-	}
-	citedOwn := 0
-	if w.CitedOwn {
-		citedOwn = 1
-	}
-	brandMentioned := 0
-	if w.BrandMentioned {
-		brandMentioned = 1
-	}
+	// One timestamp for the whole write: the run, its response and the child rows
+	// have to agree on when they were recorded.
 	now := NowUTC()
+	runID, err = insertRunRow(ctx, tx, w, now)
+	if err != nil {
+		return 0, false, err
+	}
+	responseID, err := insertResponseRow(ctx, tx, runID, w, now)
+	if err != nil {
+		return 0, false, err
+	}
+	if err := insertCitationRows(ctx, tx, runID, responseID, w.Citations); err != nil {
+		return 0, false, err
+	}
+	if err := insertMentionRows(ctx, tx, runID, responseID, w.Mentions); err != nil {
+		return 0, false, err
+	}
+	if err := insertUsageRow(ctx, tx, runID, w, now); err != nil {
+		return 0, false, err
+	}
 
+	if err := tx.Commit(); err != nil {
+		return 0, false, err
+	}
+	return runID, true, nil
+}
+
+// insertRunRow writes the run itself and returns its id.
+func insertRunRow(ctx context.Context, tx *sql.Tx, w RunWrite, now string) (int64, error) {
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO runs (
 			project_id, question_id, question_version, repeat_index, provider, model,
@@ -298,26 +310,26 @@ func (d *DB) InsertRun(ctx context.Context, w RunWrite) (runID int64, inserted b
 			cited_own, citation_count, brand_mentioned, tool_version, inserted_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'official_api', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		w.ProjectID, w.QuestionID, w.QuestionVersion, w.RepeatIndex, w.Provider, w.Model,
-		w.APIEndpointVersion, searchEnabled, w.Stage,
+		w.APIEndpointVersion, boolInt(w.SearchEnabled), w.Stage,
 		w.QuestionSetVersion, w.QuestionSetSHA256, w.PlanKey, w.Session,
 		w.StartedAtUTC, w.CompletedAtUTC, w.Status, w.CitationObservability,
-		citedOwn, w.CitationCount, brandMentioned, w.ToolVersion, now,
+		boolInt(w.CitedOwn), w.CitationCount, boolInt(w.BrandMentioned), w.ToolVersion, now,
 	)
 	if err != nil {
-		return 0, false, fmt.Errorf("insert run: %w", err)
+		return 0, fmt.Errorf("insert run: %w", err)
 	}
-	runID, err = result.LastInsertId()
-	if err != nil {
-		return 0, false, err
-	}
+	return result.LastInsertId()
+}
 
+// insertResponseRow writes the answer row and returns its id.
+func insertResponseRow(ctx context.Context, tx *sql.Tx, runID int64, w RunWrite, now string) (int64, error) {
 	answerText, rawJSON, bodyStored := w.AnswerText, w.RawResponseJSON, 1
 	if w.HashOnlyBody {
 		// The body is deliberately not kept (C1 contract O20): the hash proves what
 		// was measured without storing it.
 		answerText, rawJSON, bodyStored = "", "", 0
 	}
-	responseResult, err := tx.ExecContext(ctx, `
+	result, err := tx.ExecContext(ctx, `
 		INSERT INTO responses (
 			run_id, answer_text, answer_sha256, raw_response_json, body_stored,
 			citation_observability, error_code, error_message, input_tokens, output_tokens,
@@ -328,49 +340,46 @@ func (d *DB) InsertRun(ctx context.Context, w RunWrite) (runID int64, inserted b
 		"", now,
 	)
 	if err != nil {
-		return 0, false, fmt.Errorf("insert response: %w", err)
+		return 0, fmt.Errorf("insert response: %w", err)
 	}
-	responseID, err := responseResult.LastInsertId()
-	if err != nil {
-		return 0, false, err
-	}
+	return result.LastInsertId()
+}
 
-	for _, citation := range w.Citations {
-		isOwn := 0
-		if citation.IsOwn {
-			isOwn = 1
-		}
-		malformed := 0
-		if citation.Malformed {
-			malformed = 1
-		}
+// insertCitationRows writes the citations the answer carried.
+func insertCitationRows(ctx context.Context, tx *sql.Tx, runID, responseID int64, citations []CitationWrite) error {
+	for _, citation := range citations {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO citations (
 				run_id, response_id, position, raw_url, normalized_url, dedupe_key,
 				hostname, source_type, is_own, malformed)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			runID, responseID, citation.Position, citation.RawURL, citation.NormalizedURL,
-			citation.DedupeKey, citation.Hostname, citation.SourceType, isOwn, malformed,
+			citation.DedupeKey, citation.Hostname, citation.SourceType,
+			boolInt(citation.IsOwn), boolInt(citation.Malformed),
 		); err != nil {
-			return 0, false, fmt.Errorf("insert citation %d: %w", citation.Position, err)
+			return fmt.Errorf("insert citation %d: %w", citation.Position, err)
 		}
 	}
+	return nil
+}
 
-	for _, mention := range w.Mentions {
-		ambiguous := 0
-		if mention.Ambiguous {
-			ambiguous = 1
-		}
+// insertMentionRows writes the brand and competitor term hits of the answer.
+func insertMentionRows(ctx context.Context, tx *sql.Tx, runID, responseID int64, mentions []MentionWrite) error {
+	for _, mention := range mentions {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO mentions (run_id, response_id, term, kind, matched_text, occurrences, ambiguous)
 			VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			runID, responseID, mention.Term, mention.Kind, mention.MatchedText,
-			mention.Occurrences, ambiguous,
+			mention.Occurrences, boolInt(mention.Ambiguous),
 		); err != nil {
-			return 0, false, fmt.Errorf("insert mention %q: %w", mention.Term, err)
+			return fmt.Errorf("insert mention %q: %w", mention.Term, err)
 		}
 	}
+	return nil
+}
 
+// insertUsageRow writes the usage the provider reported for the run.
+func insertUsageRow(ctx context.Context, tx *sql.Tx, runID int64, w RunWrite, now string) error {
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO usage_records (
 			run_id, provider, model, input_tokens, output_tokens, total_tokens, tool_calls,
@@ -379,13 +388,18 @@ func (d *DB) InsertRun(ctx context.Context, w RunWrite) (runID int64, inserted b
 		runID, w.Provider, w.Model, w.Usage.InputTokens, w.Usage.OutputTokens,
 		w.Usage.TotalTokens, w.Usage.ToolCalls, now,
 	); err != nil {
-		return 0, false, fmt.Errorf("insert usage: %w", err)
+		return fmt.Errorf("insert usage: %w", err)
 	}
+	return nil
+}
 
-	if err := tx.Commit(); err != nil {
-		return 0, false, err
+// boolInt stores a Go bool as the 0 or 1 a flag column holds: SQLite has no
+// boolean type, so every one of them is INTEGER NOT NULL CHECK (... IN (0, 1)).
+func boolInt(value bool) int {
+	if value {
+		return 1
 	}
-	return runID, true, nil
+	return 0
 }
 
 // RunFilter narrows a run query. StartUTC is inclusive, EndUTC exclusive.
