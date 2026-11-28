@@ -72,18 +72,14 @@ func Compare(a, b *Result) []CompareRow {
 	add(b.Groups, false)
 	sort.Strings(order)
 
-	groupRuns := func(result *Result, provider, model, stage string) []sqliteRunView {
-		views := make([]sqliteRunView, 0, 8)
+	groupRuns := func(result *Result, provider, model, stage string) []MeasurementIdentity {
+		identities := make([]MeasurementIdentity, 0, 8)
 		for _, run := range result.Runs {
 			if run.Provider == provider && run.Model == model && run.Stage == stage {
-				views = append(views, sqliteRunView{
-					Endpoint:    run.APIEndpointVersion,
-					QuestionSet: run.QuestionSetSHA256,
-					Tool:        run.ToolVersion,
-				})
+				identities = append(identities, IdentityOf(run))
 			}
 		}
-		return views
+		return identities
 	}
 
 	rows := make([]CompareRow, 0, len(order))
@@ -141,31 +137,31 @@ func Compare(a, b *Result) []CompareRow {
 	return rows
 }
 
-type sqliteRunView struct {
-	Endpoint    string
-	QuestionSet string
-	Tool        string
-}
-
-func conditionMismatch(a, b []sqliteRunView) []string {
+// conditionMismatch compares the conditions docs/metrics.md promises to check
+// before subtracting two periods: the API surface, the question set hash and the
+// code version. A recorded value that is empty on both sides is "absent", not a
+// difference, which is why uniqueValues skips it. Build's MixedConditions uses the
+// same field names plus the question-set version label, because a group that mixes
+// two set labels is not one measurement.
+func conditionMismatch(a, b []MeasurementIdentity) []string {
 	mismatches := []string{}
-	compare := func(label string, pick func(sqliteRunView) string) {
+	compare := func(label string, pick func(MeasurementIdentity) string) {
 		left := uniqueValues(a, pick)
 		right := uniqueValues(b, pick)
 		if strings.Join(left, ",") != strings.Join(right, ",") {
 			mismatches = append(mismatches, label+": "+strings.Join(left, ",")+" -> "+strings.Join(right, ","))
 		}
 	}
-	compare("api_endpoint_version", func(v sqliteRunView) string { return v.Endpoint })
-	compare("question_set_sha256", func(v sqliteRunView) string { return v.QuestionSet })
-	compare("tool_version", func(v sqliteRunView) string { return v.Tool })
+	compare("api_endpoint_version", func(v MeasurementIdentity) string { return v.EndpointVersion })
+	compare("question_set_sha256", func(v MeasurementIdentity) string { return v.QuestionSetSHA256 })
+	compare("tool_version", func(v MeasurementIdentity) string { return v.ToolVersion })
 	return mismatches
 }
 
-func uniqueValues(views []sqliteRunView, pick func(sqliteRunView) string) []string {
+func uniqueValues(identities []MeasurementIdentity, pick func(MeasurementIdentity) string) []string {
 	set := map[string]bool{}
-	for _, view := range views {
-		value := pick(view)
+	for _, identity := range identities {
+		value := pick(identity)
 		if value == "" {
 			continue
 		}

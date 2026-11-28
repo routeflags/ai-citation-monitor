@@ -7,6 +7,7 @@ import "github.com/routeflags/ai-citation-monitor/internal/i18n"
 type labels struct {
 	title, generated                                                                                       string
 	conditionsH, conditionsNote, item, value                                                               string
+	mixedConditions                                                                                        string
 	provider, model, stage, endpoint, search, method, qsVersion, qsSha, normVersion, observedRange         string
 	brandTermsStatus, brandTermsStatusProposed, brandTermsStatusConfirmed, brandTermsStatusNotDeclared     string
 	brandTermsStatusNote                                                                                   string
@@ -32,8 +33,12 @@ var enLabels = labels{
 	title:       "AI citation report (%s)",
 	generated:   "Generated: %s (UTC). Period boundaries are JST (%s inclusive to %s exclusive)",
 	conditionsH: "Conditions",
-	conditionsNote: "**Conditions read from the records.** This is where the numbers come from; records " +
-		"with different conditions are never put in the same table.",
+	conditionsNote: "**Conditions read from the records.** This is where the numbers come " +
+		"from. A group is provider x model x stage, so records with different conditions " +
+		"can meet in it; such a group lists the fields that differ (`mixed_conditions`) " +
+		"and its rate is not one measurement.",
+	mixedConditions: "**%s** mixes measurement conditions (%s). Its rate is an average " +
+		"over them, not one measurement.",
 	item: "item", value: "value",
 	provider: "provider", model: "model", stage: "stage",
 	endpoint: "API endpoint version", search: "search enabled", method: "measurement method",
@@ -55,9 +60,11 @@ var enLabels = labels{
 	brandTermsMissing: "No brand terms are configured, so the brand mention rate is `— (not measured)`.",
 	observedH:         "Observed",
 	observedNote: "Counts before aggregation. Failures and unknown runs are excluded from the " +
-		"denominators but still counted here.",
+		"denominators but still counted here. Status and citation observability are separate " +
+		"dimensions: a failed run has no observed citation metadata either, so it appears in " +
+		"both `failure` and `unknown`.",
 	run: "runs", success: "success", failure: "failure", cancelled: "cancelled",
-	unknown: "unknown", unknownRuns: "no citation metadata (unknown)", count: "count",
+	unknown: "unknown", unknownRuns: "citation metadata not observed (unknown)", count: "count",
 	noRuns:   "No runs in this period (`— (not measured)`).",
 	derivedH: "Derived",
 	derivedNote: "The denominator of a citation rate is \"runs that succeeded and returned citation " +
@@ -100,7 +107,7 @@ var enLabels = labels{
 		"Causality (\"citations grew because of X\") or interpretation. The numbers are observation and derivation only.",
 		"Totals across providers, models or stages (the denominator stays inside a group).",
 		"Answer correctness against a ground truth (out of scope for this tool).",
-		"Values that treat unknown (no citation metadata was returned) as zero citations.",
+		"Values that treat unknown (citation metadata was not observed) as zero citations.",
 		"The consumer ChatGPT / Gemini UI. This is a sample observed through the official API.",
 	},
 	notMeasured: "`— (not measured)`", none: "none",
@@ -108,11 +115,15 @@ var enLabels = labels{
 }
 
 var jaLabels = labels{
-	title:          "AI 引用計測レポート（%s）",
-	generated:      "生成: %s（UTC）。期間の区切りは JST（%s 以上 %s 未満）",
-	conditionsH:    "条件",
-	conditionsNote: "**記録から読んだ条件。** ここが数字の出所で、条件の違う記録は同じ表に入れない。",
-	item:           "項目", value: "値",
+	title:       "AI 引用計測レポート（%s）",
+	generated:   "生成: %s（UTC）。期間の区切りは JST（%s 以上 %s 未満）",
+	conditionsH: "条件",
+	conditionsNote: "**記録から読んだ条件。** ここが数字の出所。グループは provider × model × " +
+		"stage なので、条件の違う記録が同じグループに入り得る。その場合は混在した項目" +
+		"（`mixed_conditions`）を明示し、その率は 1 つの測定ではない。",
+	mixedConditions: "**%s** は計測条件が混在している（%s）。率はそれらの平均であり、" +
+		"1 つの測定ではない。",
+	item: "項目", value: "値",
 	provider: "プロバイダー", model: "モデル", stage: "stage",
 	endpoint: "API エンドポイント版", search: "検索の有効化", method: "測定方法",
 	qsVersion: "質問セット版", qsSha: "質問セット sha256", normVersion: "正規化仕様の版",
@@ -131,9 +142,11 @@ var jaLabels = labels{
 	subdomainsIncluded: "（サブドメインを含む）", exactOnly: "（完全一致のみ）",
 	brandTermsMissing: "ブランド語が未設定のため、ブランド言及率は `—（未測定）` になる。",
 	observedH:         "観測（OBSERVED）",
-	observedNote:      "集計前の件数。失敗と unknown は分母から外すが、件数としてはここに出る。",
-	run:               "run", success: "成功", failure: "失敗", cancelled: "中断",
-	unknown: "unknown", unknownRuns: "引用メタデータなし（unknown）", count: "件数",
+	observedNote: "集計前の件数。失敗と unknown は分母から外すが、件数としてはここに出る。" +
+		"状態（status）と引用の観測（observability）は別の次元で、失敗した run も引用メタデータは" +
+		"観測されていないため、`failure` と `unknown` の両方に出る。",
+	run: "run", success: "成功", failure: "失敗", cancelled: "中断",
+	unknown: "unknown", unknownRuns: "引用メタデータ未観測（unknown）", count: "件数",
 	noRuns:   "この期間に run が無い（`—（未測定）`）。",
 	derivedH: "導出（DERIVED）",
 	derivedNote: "率の分母は「成功し、かつ引用メタデータが返った run」。n は分母。`—（未測定）` " +
@@ -173,7 +186,7 @@ var jaLabels = labels{
 		"因果（「引用が増えたのは○○のため」）と解釈。数値は観測と導出だけ。",
 		"プロバイダー・モデル・stage をまたいだ合計値（分母はグループで閉じる）。",
 		"回答の正確さ（正解データとの照合が必要で、このツールの範囲外）。",
-		"unknown（引用メタデータが返らなかった run）を「引用ゼロ」として扱った値。",
+		"unknown（引用メタデータが観測できなかった run）を「引用ゼロ」として扱った値。",
 		"一般向け ChatGPT / Gemini 画面の値。API で観測した標本に限る。",
 	},
 	notMeasured: "`—（未測定）`", none: "なし",

@@ -247,6 +247,73 @@ func TestCitationSourceHostHint(t *testing.T) {
 	}
 }
 
+func TestRegistrableDomain(t *testing.T) {
+	cases := map[string]string{
+		"rival.example":          "rival.example",
+		"www.rival.example":      "rival.example",
+		"deep.www.rival.example": "rival.example",
+		"a.b.example.co.jp":      "example.co.jp",
+		// A hosting suffix keeps the customer label: the suffix is shared.
+		"user.github.io": "user.github.io",
+		// A suffix on its own, a local name and an IP have no eTLD+1: the host is
+		// returned unchanged rather than dropped.
+		"github.io": "github.io",
+		"localhost": "localhost",
+		"192.0.2.1": "192.0.2.1",
+		"":          "",
+		// An international host is registered in its punycode form.
+		"www.例え.テスト": "xn--r8jz45g.xn--zckzah",
+	}
+	for host, want := range cases {
+		if got := RegistrableDomain(host); got != want {
+			t.Errorf("RegistrableDomain(%q) = %q, want %q", host, got, want)
+		}
+	}
+}
+
+func TestAggregationDomain(t *testing.T) {
+	competitors := []string{"rival.example"}
+	cases := []struct {
+		host        string
+		own         string
+		subdomains  bool
+		competitors []string
+		want        string
+	}{
+		// A registered domain counts its subdomains: the review's finding.
+		{"www.rival.example", "example.shop", true, competitors, "rival.example"},
+		{"blog.rival.example", "example.shop", true, competitors, "rival.example"},
+		{"www.example.shop", "example.shop", true, competitors, "example.shop"},
+		{"notexample.shop", "example.shop", true, competitors, "notexample.shop"},
+		// Exact matching keeps the host: no rolling up into the registrable domain.
+		{"www.rival.example", "example.shop", false, competitors, "www.rival.example"},
+		{"rival.example", "example.shop", false, competitors, "rival.example"},
+		// A configured domain deeper than its registrable domain stays its own row,
+		// so it does not pull in its registrable siblings.
+		{"blog.example.com", "example.shop", true, []string{"blog.example.com"}, "blog.example.com"},
+		{"x.blog.example.com", "example.shop", true, []string{"blog.example.com"}, "blog.example.com"},
+		{"shop.example.com", "example.shop", true, []string{"blog.example.com"}, "example.com"},
+		// The own domain follows the same rule.
+		{"shop.example.shop", "shop.example.shop", true, competitors, "shop.example.shop"},
+		{"www.example.shop", "shop.example.shop", true, competitors, "example.shop"},
+		// Registrations are canonicalised, so case and a trailing dot do not split a
+		// row (the old code only lower-cased).
+		{"example.com", "example.shop", true, []string{"Example.COM."}, "example.com"},
+		{"xn--r8jz45g.xn--zckzah", "example.shop", true, []string{"例え.テスト"}, "xn--r8jz45g.xn--zckzah"},
+		// A public suffix registered as a competitor over-matches (known limit): the
+		// whole suffix becomes one row instead of the host.
+		{"a.b.co.jp", "example.shop", true, []string{"co.jp"}, "co.jp"},
+		// No host, no key.
+		{"", "example.shop", true, competitors, ""},
+	}
+	for _, tc := range cases {
+		if got := AggregationDomain(tc.host, tc.own, tc.subdomains, tc.competitors); got != tc.want {
+			t.Errorf("AggregationDomain(%q, own=%q, sub=%v, %v) = %q, want %q",
+				tc.host, tc.own, tc.subdomains, tc.competitors, got, tc.want)
+		}
+	}
+}
+
 func TestClassifyDomain(t *testing.T) {
 	competitors := []string{"rival.example"}
 	if got := ClassifyDomain("www.example.shop", "example.shop", true, competitors); got != "own" {

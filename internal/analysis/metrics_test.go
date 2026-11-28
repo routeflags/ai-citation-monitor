@@ -2,6 +2,7 @@ package analysis
 
 import (
 	"math/big"
+	"reflect"
 	"testing"
 	"time"
 
@@ -81,6 +82,200 @@ func TestTenthsMatchesExactRounding(t *testing.T) {
 				t.Fatalf("Tenths(%d, %d) = %d, want %d", n, d, got, want)
 			}
 		}
+	}
+}
+
+// `1000 * n` was computed in int, which overflows above 2,147,484 on a 32-bit
+// build and would print a negative percentage. No 32-bit binary is released
+// (.goreleaser.yaml ships amd64/arm64), so this is hygiene rather than a shipped
+// defect: the counts below fit both widths, and on 64-bit the test passes with
+// either implementation, so it guards the rule rather than the width.
+func TestTenthsDoesNotOverflowOnLargeCounts(t *testing.T) {
+	for _, c := range []struct {
+		n, d int
+		want int
+	}{
+		{3_000_000, 3_000_000, 1000},
+		{2_500_000, 3_000_000, 833},
+		{2_147_483_647, 2_147_483_647, 1000},
+	} {
+		if got := Tenths(c.n, c.d); got != c.want {
+			t.Errorf("Tenths(%d, %d) = %d, want %d", c.n, c.d, got, c.want)
+		}
+	}
+	if got := NewRate(2_500_000, 3_000_000).Text; got != "83.3%" {
+		t.Errorf("NewRate(2500000, 3000000).Text = %q, want 83.3%%", got)
+	}
+}
+
+// Issue #10 P1-1: a registered competitor has to count the subdomains its
+// classification already counts, or the rate prints 0% for a site the report calls
+// a competitor. The share table stays per host (D23).
+func TestCompetitorRateCountsSubdomainsOfARegisteredDomain(t *testing.T) {
+	runs := []sqlite.Run{
+		run(1, "openai", "m", "smoke", "Q01", false, "observed", "success", "2026-11-12T01:00:00Z"),
+		run(2, "openai", "m", "smoke", "Q01", false, "observed", "success", "2026-11-12T01:00:00Z"),
+		run(3, "openai", "m", "smoke", "Q01", false, "observed", "success", "2026-11-12T01:00:00Z"),
+		run(4, "openai", "m", "smoke", "Q02", false, "observed", "success", "2026-11-12T01:00:00Z"),
+		run(5, "openai", "m", "smoke", "Q02", false, "observed", "success", "2026-11-12T01:00:00Z"),
+	}
+	citations := []sqlite.CitationRow{
+		{RunID: 1, Position: 1, Hostname: host("www.example.com")},
+		{RunID: 1, Position: 2, Hostname: host("example.com")},
+		{RunID: 2, Position: 1, Hostname: host("blog.example.com")},
+		{RunID: 3, Position: 1, Hostname: host("localhost")},
+		{RunID: 4, Position: 1, Hostname: nil},
+		{RunID: 5, Position: 1, Hostname: host("notexample.com")},
+	}
+	group := Build(runs, citations, Options{
+		OwnDomain: "example.shop", Subdomains: true, Competitors: []string{"example.com"},
+	})[0]
+
+	rows := map[string]DomainRate{}
+	for _, row := range group.CompetitorRate {
+		rows[row.Domain] = row
+	}
+	example, ok := rows["example.com"]
+	if !ok {
+		t.Fatalf("no example.com row: %+v", group.CompetitorRate)
+	}
+	// Run 1 cited the apex and www., run 2 cited blog.: three citations, two runs.
+	if example.Runs != 2 {
+		t.Errorf("example.com runs = %d, want 2 (one per run, subdomains included)", example.Runs)
+	}
+	if got := example.Rate.Display(i18n.EN); got != "40.0% (n=2/5)" {
+		t.Errorf("example.com rate = %q, want 40.0%% of the group's judgeable runs", got)
+	}
+	if example.Classification != "competitor" || !example.Registered {
+		t.Errorf("example.com row = %+v, want a registered competitor", example)
+	}
+	// The classification of a row agrees with the classification of its hosts.
+	if _, ok := rows["www.example.com"]; ok {
+		t.Error("the rate table must not keep a separate www.example.com row")
+	}
+	if len(rows) != 3 {
+		t.Errorf("rate rows = %d (%v), want example.com, localhost and notexample.com", len(rows), rows)
+	}
+
+	// The share table is the per-host view of the same citations.
+	shareByHost := map[string]DomainShare{}
+	for _, row := range group.DomainShare {
+		shareByHost[row.Domain] = row
+	}
+	for _, fakeHost := range []string{"www.example.com", "example.com", "blog.example.com", "localhost", "(no host)"} {
+		if _, ok := shareByHost[fakeHost]; !ok {
+			t.Errorf("the share table is missing the host %q: %+v", fakeHost, group.DomainShare)
+		}
+	}
+	if shareByHost["blog.example.com"].Classification != "competitor" {
+		t.Errorf("share classification = %q, want competitor", shareByHost["blog.example.com"].Classification)
+	}
+	if group.CitationTotal != 6 {
+		t.Errorf("citation total = %d, want 6 (two from run 1, one each from the rest)", group.CitationTotal)
+	}
+}
+
+// With subdomains off the unit is the exact host, so the rate table must not roll
+// a host up into its registrable domain.
+func TestCompetitorRateKeepsExactHostsWithoutSubdomains(t *testing.T) {
+	runs := []sqlite.Run{
+		run(1, "openai", "m", "smoke", "Q01", false, "observed", "success", "2026-11-12T01:00:00Z"),
+		run(2, "openai", "m", "smoke", "Q01", false, "observed", "success", "2026-11-12T01:00:00Z"),
+	}
+	citations := []sqlite.CitationRow{
+		{RunID: 1, Position: 1, Hostname: host("www.example.com")},
+		{RunID: 2, Position: 1, Hostname: host("example.com")},
+	}
+	group := Build(runs, citations, Options{
+		OwnDomain: "example.shop", Subdomains: false, Competitors: []string{"example.com"},
+	})[0]
+	rows := map[string]DomainRate{}
+	for _, row := range group.CompetitorRate {
+		rows[row.Domain] = row
+	}
+	if rows["example.com"].Runs != 1 {
+		t.Errorf("example.com runs = %d, want 1 (exact match only)", rows["example.com"].Runs)
+	}
+	www, ok := rows["www.example.com"]
+	if !ok {
+		t.Fatalf("a host with subdomains off must keep its own row: %+v", group.CompetitorRate)
+	}
+	if www.Classification != "other" || www.Registered {
+		t.Errorf("www.example.com row = %+v, want an unregistered other", www)
+	}
+}
+
+// A registered competitor that was never cited is a 0% rate over a real
+// denominator, not "not measured".
+func TestRegisteredButUncitedCompetitorKeepsTheDenominator(t *testing.T) {
+	runs := []sqlite.Run{
+		run(1, "openai", "m", "smoke", "Q01", false, "observed", "success", "2026-11-12T01:00:00Z"),
+	}
+	group := Build(runs, nil, Options{
+		OwnDomain: "example.shop", Subdomains: true, Competitors: []string{"unused.example"},
+	})[0]
+	if len(group.CompetitorRate) != 1 {
+		t.Fatalf("rows = %+v, want the registered competitor", group.CompetitorRate)
+	}
+	row := group.CompetitorRate[0]
+	if row.Runs != 0 || row.Rate.D != 1 || row.Rate.Text != "0.0%" {
+		t.Errorf("row = %+v, want 0.0%% (n=0/1), not an unmeasured rate", row)
+	}
+}
+
+// A competitor registered deeper than its registrable domain stays its own row and
+// does not pull in its registrable siblings (D23). The row's classification comes
+// from the same key, so it cannot disagree with the host it stands for.
+func TestDeeperCompetitorRegistrationDoesNotOverMatch(t *testing.T) {
+	runs := []sqlite.Run{
+		run(1, "openai", "m", "smoke", "Q01", false, "observed", "success", "2026-11-12T01:00:00Z"),
+		run(2, "openai", "m", "smoke", "Q02", false, "observed", "success", "2026-11-12T01:00:00Z"),
+	}
+	citations := []sqlite.CitationRow{
+		{RunID: 1, Position: 1, Hostname: host("blog.example.com")},
+		{RunID: 2, Position: 1, Hostname: host("shop.example.com")},
+	}
+	group := Build(runs, citations, Options{
+		OwnDomain: "example.shop", Subdomains: true, Competitors: []string{"blog.example.com"},
+	})[0]
+	rows := map[string]DomainRate{}
+	for _, row := range group.CompetitorRate {
+		rows[row.Domain] = row
+	}
+	blog, ok := rows["blog.example.com"]
+	if !ok || blog.Runs != 1 || blog.Classification != "competitor" {
+		t.Fatalf("blog.example.com row = %+v (ok=%v), want the registered competitor", blog, ok)
+	}
+	sibling, ok := rows["example.com"]
+	if !ok {
+		t.Fatalf("no example.com row for the registrable sibling: %+v", group.CompetitorRate)
+	}
+	if sibling.Runs != 1 || sibling.Classification != "other" || sibling.Registered {
+		t.Errorf("example.com row = %+v, want the shop.example.com citation only", sibling)
+	}
+	if len(rows) != 2 {
+		t.Errorf("rate rows = %d, want 2 (no roll-up of the registrable domain)", len(rows))
+	}
+}
+
+// The registered value is canonicalised before it becomes a key: case, whitespace
+// and a trailing dot used to split the row from the host it names.
+func TestCompetitorRegistrationIsCanonicalised(t *testing.T) {
+	runs := []sqlite.Run{
+		run(1, "openai", "m", "smoke", "Q01", false, "observed", "success", "2026-11-12T01:00:00Z"),
+	}
+	citations := []sqlite.CitationRow{
+		{RunID: 1, Position: 1, Hostname: host("example.com")},
+	}
+	group := Build(runs, citations, Options{
+		OwnDomain: "example.shop", Subdomains: true, Competitors: []string{" Example.COM. "},
+	})[0]
+	if len(group.CompetitorRate) != 1 {
+		t.Fatalf("rows = %+v, want the canonicalised competitor only", group.CompetitorRate)
+	}
+	row := group.CompetitorRate[0]
+	if row.Domain != "example.com" || row.Runs != 1 || !row.Registered {
+		t.Errorf("row = %+v, want example.com with one run", row)
 	}
 }
 
@@ -314,6 +509,178 @@ func TestTrendsNotesADifferentDenominator(t *testing.T) {
 	ja := TrendPoint{Reason: "n_differs", Detail: "2 vs 1"}.NoteFor(i18n.JA)
 	if ja != "n が違う（2 vs 1）" {
 		t.Errorf("ja note = %q, want the compare wording", ja)
+	}
+}
+
+// A group is provider x model x stage, so a period can put records of different
+// measurement conditions in it (D24). The rate is still computed, and the group
+// says which fields differ: the mix is never silent.
+func TestBuildReportsMixedMeasurementConditions(t *testing.T) {
+	first := run(1, "openai", "m", "smoke", "Q01", false, "observed", "success", "2026-11-12T01:00:00Z")
+	first.ToolVersion = "0.1.0+norm3"
+	first.QuestionSetVersion = "1"
+	first.QuestionSetSHA256 = "set-a"
+	second := run(2, "openai", "m", "smoke", "Q02", false, "observed", "success", "2026-11-12T01:00:00Z")
+	second.ToolVersion = "0.2.0+norm3"
+	second.QuestionSetVersion = "1"
+	second.QuestionSetSHA256 = "set-a"
+	third := run(3, "openai", "m", "smoke", "Q03", false, "observed", "success", "2026-11-12T01:00:00Z")
+	third.ToolVersion = "0.2.0+norm3"
+	third.QuestionSetVersion = "2"
+	third.QuestionSetSHA256 = "set-b"
+
+	group := Build([]sqlite.Run{first, second, third}, nil, Options{})[0]
+	want := []string{
+		"tool_version: 0.1.0+norm3, 0.2.0+norm3",
+		"question_set_version: 1, 2",
+		"question_set_sha256: set-a, set-b",
+	}
+	if len(group.MixedConditions) != len(want) {
+		t.Fatalf("mixed = %v, want %v", group.MixedConditions, want)
+	}
+	for index := range want {
+		if group.MixedConditions[index] != want[index] {
+			t.Errorf("mixed[%d] = %q, want %q", index, group.MixedConditions[index], want[index])
+		}
+	}
+	if group.CitedOwn.D != 3 {
+		t.Errorf("denominator = %d, want 3 (the rate is still computed)", group.CitedOwn.D)
+	}
+
+	// One measurement: nothing to report.
+	sameA := first
+	sameB := run(4, "openai", "m", "smoke", "Q04", false, "observed", "success", "2026-11-12T01:00:00Z")
+	sameB.ToolVersion = first.ToolVersion
+	sameB.QuestionSetVersion = first.QuestionSetVersion
+	sameB.QuestionSetSHA256 = first.QuestionSetSHA256
+	if got := Build([]sqlite.Run{sameA, sameB}, nil, Options{})[0].MixedConditions; len(got) != 0 {
+		t.Errorf("a group of one measurement reported %v", got)
+	}
+	// An empty recorded condition is a condition of its own, not a missing detail.
+	setless := run(9, "openai", "m", "smoke", "Q04", false, "observed", "success", "2026-11-12T01:00:00Z")
+	setless.QuestionSetSHA256 = ""
+	setless.ToolVersion = "0.1.0+norm3"
+	withSet := run(10, "openai", "m", "smoke", "Q05", false, "observed", "success", "2026-11-12T01:00:00Z")
+	withSet.QuestionSetSHA256 = "set-a"
+	withSet.ToolVersion = "0.1.0+norm3"
+	mixed := Build([]sqlite.Run{setless, withSet}, nil, Options{})[0].MixedConditions
+	if len(mixed) != 1 || mixed[0] != "question_set_sha256: set-a, —" {
+		t.Errorf("mixed = %v, want the empty set name shown as —", mixed)
+	}
+}
+
+// The review's Comparability invariant: the input order must not change the
+// result. Group order is sorted and every list inside a group is sorted or
+// accumulated from the same set, so a reordered slice has to produce the same
+// groups. questionMeta keeps the first text seen for a question key (existing
+// behaviour), so the texts are identical in this fixture.
+func TestBuildIsOrderInvariant(t *testing.T) {
+	runs := []sqlite.Run{
+		run(1, "openai", "a", "smoke", "Q01", true, "observed", "success", "2026-11-12T01:00:00Z"),
+		run(2, "openai", "a", "smoke", "Q02", false, "observed", "success", "2026-11-12T01:00:00Z"),
+		run(3, "openai", "b", "smoke", "Q01", false, "unknown", "success", "2026-11-12T01:00:00Z"),
+		run(4, "openai", "b", "smoke", "Q02", false, "unknown", "error", "2026-11-12T01:00:00Z"),
+		run(5, "gemini", "a", "smoke", "Q01", true, "observed", "success", "2026-11-12T01:00:00Z"),
+	}
+	citations := []sqlite.CitationRow{
+		{RunID: 1, Position: 1, Hostname: host("www.example.shop")},
+		{RunID: 1, Position: 2, Hostname: host("rival.example")},
+		{RunID: 2, Position: 1, Hostname: host("blog.rival.example")},
+		{RunID: 5, Position: 1, Hostname: host("example.shop")},
+	}
+	opts := Options{OwnDomain: "example.shop", Subdomains: true, Competitors: []string{"rival.example"}}
+	want := Build(runs, citations, opts)
+
+	reorders := [][]int{
+		{4, 3, 2, 1, 0},
+		{2, 0, 4, 1, 3},
+		{1, 2, 3, 4, 0},
+	}
+	for _, order := range reorders {
+		shuffledRuns := make([]sqlite.Run, 0, len(runs))
+		for _, index := range order {
+			shuffledRuns = append(shuffledRuns, runs[index])
+		}
+		shuffledCitations := make([]sqlite.CitationRow, 0, len(citations))
+		for index := len(citations) - 1; index >= 0; index-- {
+			shuffledCitations = append(shuffledCitations, citations[index])
+		}
+		if got := Build(shuffledRuns, shuffledCitations, opts); !reflect.DeepEqual(got, want) {
+			t.Errorf("order %v changed the result:\n got %+v\nwant %+v", order, got, want)
+		}
+	}
+}
+
+// The review's Aggregation invariants, as the Go tests D21 says are the right
+// tool for "which set is counted": a rate never exceeds 1, the per-question
+// rates add up to the group rate, the share column adds up to the citation
+// total, and a failed run is never in the citation denominator.
+func TestAggregationInvariants(t *testing.T) {
+	runs := []sqlite.Run{
+		run(1, "openai", "m", "smoke", "Q01", true, "observed", "success", "2026-11-12T01:00:00Z"),
+		run(2, "openai", "m", "smoke", "Q01", false, "observed", "success", "2026-11-12T01:00:00Z"),
+		run(3, "openai", "m", "smoke", "Q02", false, "observed", "success", "2026-11-12T01:00:00Z"),
+		run(4, "openai", "m", "smoke", "Q02", false, "unknown", "success", "2026-11-12T01:00:00Z"),
+		run(5, "openai", "m", "smoke", "Q03", false, "unknown", "error", "2026-11-12T01:00:00Z"),
+		run(6, "openai", "m", "smoke", "Q03", false, "observed", "cancelled", "2026-11-12T01:00:00Z"),
+	}
+	citations := []sqlite.CitationRow{
+		{RunID: 1, Position: 1, Hostname: host("example.shop")},
+		{RunID: 1, Position: 2, Hostname: host("rival.example")},
+		{RunID: 2, Position: 1, Hostname: nil},
+		{RunID: 5, Position: 1, Hostname: host("rival.example")},
+	}
+	for _, group := range Build(runs, citations, Options{OwnDomain: "example.shop", Subdomains: true}) {
+		for _, rate := range []Rate{group.CitedOwn, group.BrandMentioned, group.Coverage.Rate} {
+			if rate.Measured() && (rate.N < 0 || rate.N > rate.D) {
+				t.Errorf("%s: %+v violates 0 <= N <= D", group.Label(), rate)
+			}
+		}
+		questionD, questionN := 0, 0
+		for _, row := range group.PerQuestion {
+			questionD += row.Rate.D
+			questionN += row.Rate.N
+		}
+		if questionD != group.CitedOwn.D || questionN != group.CitedOwn.N {
+			t.Errorf("%s: per-question totals n=%d/%d, group n=%d/%d", group.Label(),
+				questionN, questionD, group.CitedOwn.N, group.CitedOwn.D)
+		}
+		shareCount := 0
+		for _, row := range group.DomainShare {
+			shareCount += row.Count
+		}
+		if shareCount != group.CitationTotal {
+			t.Errorf("%s: share counts %d, citation total %d", group.Label(), shareCount, group.CitationTotal)
+		}
+		// Judgeable runs only: 3 successes with metadata out of 6 runs.
+		if group.CitedOwn.D != 3 {
+			t.Errorf("%s: citation denominator = %d, want 3 (failed and unknown runs excluded)", group.Label(), group.CitedOwn.D)
+		}
+	}
+}
+
+// The trend denominator is the number of judgeable runs, not `successes -
+// unknown`: unknown is status-independent, so subtracting it dropped a valid
+// bucket below zero and printed "not measured".
+func TestTrendsCountsJudgeableRuns(t *testing.T) {
+	runs := []sqlite.Run{
+		run(1, "openai", "m", "smoke", "Q01", true, "observed", "success", "2026-11-01T01:00:00Z"),
+		run(2, "openai", "m", "smoke", "Q02", false, "unknown", "success", "2026-11-01T01:00:00Z"),
+		run(3, "openai", "m", "smoke", "Q03", false, "unknown", "error", "2026-11-01T01:00:00Z"),
+	}
+	series, err := Trends(runs, "weekly")
+	if err != nil {
+		t.Fatalf("Trends: %v", err)
+	}
+	if len(series) != 1 || len(series[0].Points) != 1 {
+		t.Fatalf("series = %+v", series)
+	}
+	point := series[0].Points[0]
+	if point.CitedOwn.D != 1 || point.CitedOwn.Text != "100.0%" {
+		t.Errorf("cited rate = %+v, want 1/1: the one observed success is measured", point.CitedOwn)
+	}
+	if point.RunsValid != 2 || point.RunsError != 1 || point.RunsUnknown != 2 {
+		t.Errorf("counts = valid %d, error %d, unknown %d", point.RunsValid, point.RunsError, point.RunsUnknown)
 	}
 }
 

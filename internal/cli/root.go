@@ -17,6 +17,7 @@ import (
 
 	"github.com/routeflags/ai-citation-monitor/internal/analysis"
 	"github.com/routeflags/ai-citation-monitor/internal/config"
+	"github.com/routeflags/ai-citation-monitor/internal/domain"
 	"github.com/routeflags/ai-citation-monitor/internal/storage/sqlite"
 )
 
@@ -173,23 +174,29 @@ func (a *App) Verbosef(format string, args ...any) {
 }
 
 // analysisOptions merges the stored competitors with the configured ones.
+//
+// The names are canonicalised here, at the boundary, so a config value with a
+// trailing dot or in Unicode is stored and matched in the same form a citation host
+// takes (D23). The analysis layer canonicalises defensively as well.
 func (a *App) analysisOptions(ctx context.Context, db *sqlite.DB, cfg *config.Config, project *sqlite.Project) (analysis.Options, error) {
 	competitors := map[string]bool{}
-	for _, domain := range cfg.Competitors {
-		if trimmed := strings.ToLower(strings.TrimSpace(domain)); trimmed != "" {
-			competitors[trimmed] = true
+	for _, configured := range cfg.Competitors {
+		if canonical := domain.CanonicalHost(configured); canonical != "" {
+			competitors[canonical] = true
 		}
 	}
 	stored, err := db.Competitors(ctx, project.ID)
 	if err != nil {
 		return analysis.Options{}, err
 	}
-	for _, domain := range stored {
-		competitors[domain] = true
+	for _, storedDomain := range stored {
+		if canonical := domain.CanonicalHost(storedDomain); canonical != "" {
+			competitors[canonical] = true
+		}
 	}
 	list := make([]string, 0, len(competitors))
-	for domain := range competitors {
-		list = append(list, domain)
+	for competitor := range competitors {
+		list = append(list, competitor)
 	}
 	sort.Strings(list)
 
@@ -207,7 +214,7 @@ func (a *App) analysisOptions(ctx context.Context, db *sqlite.DB, cfg *config.Co
 		ownDomain = cfg.OwnDomain
 	}
 	return analysis.Options{
-		OwnDomain:   ownDomain,
+		OwnDomain:   domain.CanonicalHost(ownDomain),
 		Subdomains:  project.Subdomains,
 		Competitors: list,
 		Roster:      roster,

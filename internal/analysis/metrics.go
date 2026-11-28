@@ -6,6 +6,9 @@
 //   - a brand-mention rate divides by successful runs (the answer text exists)
 //   - n = 0 is "—（未測定）", never 0.0%
 //   - groups are provider x model x stage: there is no cross-group total
+//   - a group whose records do not share one measurement identity lists the fields
+//     that differ (mixed_conditions): the rate is still computed, never silently
+//     presented as one measurement
 //   - failure and unknown are counted and reported, never divided into a rate
 package analysis
 
@@ -54,16 +57,25 @@ func NewRate(n, d int) Rate {
 // tenth. n is a numerator — a count of runs or citations, so it is not negative — and d
 // is positive; NewRate is the only caller and it establishes both.
 func Tenths(n, d int) int {
-	q, r := 1000*n/d, 1000*n%d
+	// The product is computed in int64 so the result does not depend on the width of
+	// int: `1000*n` overflows a 32-bit int above 2.1 million (the first failure is
+	// n = 2,147,484) and the report would print a negative percentage. The release
+	// matrix is amd64/arm64, so this is hygiene rather than a shipped defect; on a
+	// 64-bit build the product is exact for every count below MaxInt64/1000
+	// (~9.2e15), and a count comes from the length of a slice. The rounding rule is
+	// unchanged; proofs/Rate.lean states it over Nat, so the Go side has to stay
+	// inside the width it can hold.
+	n64, d64 := int64(n), int64(d)
+	q, r := 1000*n64/d64, 1000*n64%d64
 	switch {
-	case 2*r < d:
-		return q
-	case 2*r > d:
-		return q + 1
+	case 2*r < d64:
+		return int(q)
+	case 2*r > d64:
+		return int(q + 1)
 	case q%2 == 0:
-		return q
+		return int(q)
 	default:
-		return q + 1
+		return int(q + 1)
 	}
 }
 
@@ -177,6 +189,82 @@ type Group struct {
 	CompetitorRate  []DomainRate   `json:"competitor_rate"`
 	CitationTotal   int            `json:"citation_total"`
 	UnknownMentions int            `json:"unknown_mentions"`
+
+	// MixedConditions names the measurement conditions that are not the same inside
+	// this group, e.g. "tool_version: 0.1.0+norm3, 0.2.0+norm4". Empty means the
+	// group is one measurement. The rates are still computed — a group is provider
+	// x model x stage by design — so this list is what keeps a mix from being
+	// silent: the report prints it and a consumer can refuse to read the rate.
+	MixedConditions []string `json:"mixed_conditions"`
+}
+
+// MeasurementIdentity is what has to be equal before two rates can be read as the
+// same measurement: the API surface, the code (and matching rules) that produced
+// the record, and the question set it was measured with.
+//
+// Compare refuses a delta when two sides differ; Build reports a group that mixes
+// them. Both use this type and the same field names, so the vocabulary cannot
+// drift between the two.
+type MeasurementIdentity struct {
+	EndpointVersion    string `json:"api_endpoint_version"`
+	ToolVersion        string `json:"tool_version"`
+	QuestionSetVersion string `json:"question_set_version"`
+	QuestionSetSHA256  string `json:"question_set_sha256"`
+}
+
+// IdentityOf reads the measurement identity a run recorded.
+func IdentityOf(run sqlite.Run) MeasurementIdentity {
+	return MeasurementIdentity{
+		EndpointVersion:    run.APIEndpointVersion,
+		ToolVersion:        run.ToolVersion,
+		QuestionSetVersion: run.QuestionSetVersion,
+		QuestionSetSHA256:  run.QuestionSetSHA256,
+	}
+}
+
+// identityFields is the fixed order in which the fields are compared and
+// reported, so two runs of the same data print the same line.
+var identityFields = []struct {
+	label string
+	pick  func(MeasurementIdentity) string
+}{
+	{"api_endpoint_version", func(id MeasurementIdentity) string { return id.EndpointVersion }},
+	{"tool_version", func(id MeasurementIdentity) string { return id.ToolVersion }},
+	{"question_set_version", func(id MeasurementIdentity) string { return id.QuestionSetVersion }},
+	{"question_set_sha256", func(id MeasurementIdentity) string { return id.QuestionSetSHA256 }},
+}
+
+// MixedConditions lists the identity fields whose values differ inside one group.
+//
+// An empty recorded value counts as a value of its own: a run made without a
+// question set was not measured with the set the other runs name. It is printed as
+// "—" so the line never looks like a separator.
+func MixedConditions(identities []MeasurementIdentity) []string {
+	mixed := make([]string, 0, len(identityFields))
+	for _, field := range identityFields {
+		values := map[string]bool{}
+		for _, identity := range identities {
+			values[field.pick(identity)] = true
+		}
+		if len(values) < 2 {
+			continue
+		}
+		list := make([]string, 0, len(values))
+		for value := range values {
+			list = append(list, conditionValue(value))
+		}
+		sort.Strings(list)
+		mixed = append(mixed, field.label+": "+strings.Join(list, ", "))
+	}
+	return mixed
+}
+
+// conditionValue renders an empty recorded condition in a mixed-condition line.
+func conditionValue(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "—"
+	}
+	return value
 }
 
 // Label is the group identity used in tables and file names.
@@ -211,7 +299,8 @@ const (
 // Build groups runs and citations. It never aggregates across groups.
 func Build(runs []sqlite.Run, citations []sqlite.CitationRow, opts Options) []Group {
 	type acc struct {
-		runs []sqlite.Run
+		runs       []sqlite.Run
+		identities []MeasurementIdentity
 	}
 	buckets := map[string]*acc{}
 	order := []string{}
@@ -222,6 +311,7 @@ func Build(runs []sqlite.Run, citations []sqlite.CitationRow, opts Options) []Gr
 			order = append(order, key)
 		}
 		buckets[key].runs = append(buckets[key].runs, run)
+		buckets[key].identities = append(buckets[key].identities, IdentityOf(run))
 	}
 	byRun := map[int64][]sqlite.CitationRow{}
 	for _, citation := range citations {
@@ -234,6 +324,10 @@ func Build(runs []sqlite.Run, citations []sqlite.CitationRow, opts Options) []Gr
 		bucket := buckets[key]
 		first := bucket.runs[0]
 		group := Group{Provider: first.Provider, Model: first.Model, Stage: first.Stage}
+		// A group is provider x model x stage by design (invariant 2), so records of
+		// different measurement conditions can land in it. The rates stay as they are;
+		// this list is what stops the mix from being invisible (D24).
+		group.MixedConditions = MixedConditions(bucket.identities)
 
 		judgedRuns := make([]sqlite.Run, 0, len(bucket.runs))
 		groupCitations := make([]sqlite.CitationRow, 0, 16)
@@ -404,34 +498,37 @@ func buildDomains(citations []sqlite.CitationRow, judgedRuns []sqlite.Run, opts 
 	}
 
 	perRunDomains := map[int64]map[string]bool{}
+	aggregated := map[string]bool{}
 	for _, citation := range citations {
 		if citation.Hostname == nil || *citation.Hostname == "" {
+			continue
+		}
+		// The rate is counted per site, while the share table above stays per host:
+		// registering example.com has to count www.example.com and blog.example.com
+		// (D23), and the key a citation falls under is the same key the report shows.
+		key := domain.AggregationDomain(*citation.Hostname, opts.OwnDomain, opts.Subdomains, opts.Competitors)
+		if key == "" {
 			continue
 		}
 		if perRunDomains[citation.RunID] == nil {
 			perRunDomains[citation.RunID] = map[string]bool{}
 		}
-		perRunDomains[citation.RunID][*citation.Hostname] = true
+		perRunDomains[citation.RunID][key] = true
+		aggregated[key] = true
 	}
 
-	candidates := map[string]bool{}
-	for name := range shareCounts {
-		if name != "(no host)" {
-			candidates[name] = true
-		}
-	}
 	registered := map[string]bool{}
 	for _, competitor := range opts.Competitors {
-		normalized := strings.ToLower(strings.TrimSpace(competitor))
-		if normalized == "" {
+		key := domain.AggregationDomain(competitor, opts.OwnDomain, opts.Subdomains, opts.Competitors)
+		if key == "" {
 			continue
 		}
-		registered[normalized] = true
-		candidates[normalized] = true
+		registered[key] = true
+		aggregated[key] = true
 	}
 
-	rates := make([]DomainRate, 0, len(candidates))
-	for name := range candidates {
+	rates := make([]DomainRate, 0, len(aggregated))
+	for name := range aggregated {
 		hits := 0
 		for _, run := range judgedRuns {
 			if perRunDomains[run.ID][name] {
