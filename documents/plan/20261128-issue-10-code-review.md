@@ -211,3 +211,28 @@ issue は「2026年11月28日時点の main」を読んだ静的レビューで�
 - P3-5: `Tenths` の int64 化。テスト: 大きな件数、既存の全数テストとベクタ。
 - 検証: 下のチェックリストを実行し、結果を issue #10 のコメントに残す。
 
+### コードレビュー（実装後）の指摘と対応
+
+実装を別のサブエージェント（scout、読み取り専用）に `df7dd60..HEAD` でレビューさせた。APPROVE WITH CHANGES。ブロッカー 2 件は追加コミット `b3e7a4c` で修正した。
+
+| 指摘 | 対応 |
+|---|---|
+| `analysisOptions` と `competitors add` で正規化が違う（config の URL が「一致しない競合行」になる） | 両方を `normalizeDomain` に統一。単体テストを追加 |
+| レポートの `competitorNote` / `shareNote` が、獲得率（サイト単位）とシェア（ホスト単位）の単位差を説明していない | EN/JA の注記を更新し、テストで固定 |
+| `registered` が `own` 行で true になる | D23 §7 どおり `own` は `registered = false` に。テスト追加 |
+| 旧バージョンが保存した Unicode の競合行を `remove` できない | 保存値の正規化形が一致する行も削除。`list` はソート済みの正規名 |
+| `docs/architecture.md` の compare の説明が 4 項目に読める | 「4 のうち 3 項目、空は差分としない」と明記 |
+| `docs/cli-reference.md` の「per site」が `subdomains = false` を無視 | 但し書きを追加 |
+| `buildTotals` のコメントが計画にあるのに無い | コメントを追加 |
+
+### 最終検証（ローカル、push なし）
+
+- `gofmt -l .` → 空
+- `go vet ./...` / `go build ./...` → 成功
+- `go test -count=1 ./...` → 全パッケージ ok
+- `go test -race -count=1 ./...` → 全パッケージ ok
+- `golangci-lint v2.15.0 run` → `0 issues.`
+- `GOOS=linux GOARCH=arm go test -c ./internal/analysis` → コンパイル成功（実行はしていない）
+- `make proof`（Lean）→ **未実行**。この環境に `lean`/`elan` が無い。`proofs/Rate.lean` と `rate-vectors.csv` は変更していない（`Tenths` の丸め規則は不変で、`internal/analysis/vectors_test.go` は `go test` で通っている）
+- `govulncheck` → 未実行（ネットワーク取得が必要なため。CI の `make check` の範囲）
+
