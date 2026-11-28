@@ -264,7 +264,8 @@ func (c *Config) ApplyDefaults() {
 	// something the operator did not choose (see docs/providers.md).
 }
 
-// Problems lists what prevents a measurement from running. Each entry names the
+// Problems lists what makes the configuration unusable for a measurement: a setting
+// that is missing, or one that would make a rate meaningless. Each entry names the
 // setting and how to fix it (exit code 2).
 func (c *Config) Problems() []string {
 	problems := []string{}
@@ -284,6 +285,14 @@ func (c *Config) Problems() []string {
 			"own_domain %q is a public suffix, so every site under it would count as yours; use your registrable domain instead (for a hosted suffix, your own subdomain such as mysite.%s)",
 			own, domain.CanonicalHost(own)))
 	}
+	// A competitor row stands for a whole site (D23), so a public suffix would count
+	// every customer of that suffix as one competitor. The same rule as own_domain:
+	// a setting that decides which site a row belongs to cannot be a shared suffix.
+	for _, competitor := range publicSuffixCompetitors(c.Competitors) {
+		problems = append(problems, fmt.Sprintf(
+			"competitor %q is a public suffix, so every site under it would count as that competitor; register a registrable domain instead",
+			competitor))
+	}
 	if strings.TrimSpace(c.Market) == "" {
 		problems = append(problems, "market is empty (the same question in another market is a different measurement)")
 	}
@@ -295,6 +304,27 @@ func (c *Config) Problems() []string {
 			c.Report.Language, c.Language))
 	}
 	return problems
+}
+
+// publicSuffixCompetitors lists the configured competitors that are public suffixes
+// themselves: canonicalised the way `competitors add` and report-time matching
+// canonicalise them, deduplicated, in a fixed order. Values that are not public
+// suffixes are not returned; an empty entry is not a domain and is ignored.
+func publicSuffixCompetitors(competitors []string) []string {
+	seen := map[string]bool{}
+	invalid := make([]string, 0, len(competitors))
+	for _, configured := range competitors {
+		competitor := domain.CanonicalConfiguredDomain(configured)
+		if competitor == "" || seen[competitor] {
+			continue
+		}
+		seen[competitor] = true
+		if domain.IsPublicSuffix(competitor) {
+			invalid = append(invalid, competitor)
+		}
+	}
+	sort.Strings(invalid)
+	return invalid
 }
 
 var envName = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)

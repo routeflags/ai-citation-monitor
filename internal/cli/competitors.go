@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -33,7 +32,7 @@ func (a *App) competitorsAddCommand() *cobra.Command {
 		Short: "Register a competitor domain",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			competitor := normalizeDomain(args[0])
+			competitor := domain.CanonicalConfiguredDomain(args[0])
 			if competitor == "" {
 				return failf(ExitConfig, "usage", "a bare host name is required")
 			}
@@ -96,24 +95,37 @@ func (a *App) competitorsListCommand() *cobra.Command {
 			}
 			combined := map[string]string{}
 			for _, configured := range cfg.Competitors {
-				combined[normalizeDomain(configured)] = "config"
+				combined[domain.CanonicalConfiguredDomain(configured)] = "config"
 			}
 			for _, stored := range stored {
-				combined[normalizeDomain(stored)] = "database"
+				combined[domain.CanonicalConfiguredDomain(stored)] = "database"
 			}
+			names := make([]string, 0, len(combined))
+			invalid := make([]string, 0, len(combined))
+			for competitor := range combined {
+				names = append(names, competitor)
+				// A row recorded before either check existed is not deleted: the table is the
+				// management record. It is shown with the reason it must be fixed, because a
+				// report still applies it until the config or the row is changed (D26).
+				if domain.IsPublicSuffix(competitor) {
+					invalid = append(invalid, competitor)
+				}
+			}
+			sort.Strings(names)
+			sort.Strings(invalid)
 			if a.JSON {
-				return a.PrintJSON(map[string]any{"competitors": combined})
+				return a.PrintJSON(map[string]any{"competitors": combined, "invalid": invalid})
 			}
 			if len(combined) == 0 {
 				fmt.Fprintln(a.Out, "no competitor domains registered")
 				return nil
 			}
-			names := make([]string, 0, len(combined))
-			for competitor := range combined {
-				names = append(names, competitor)
-			}
-			sort.Strings(names)
 			for _, competitor := range names {
+				if domain.IsPublicSuffix(competitor) {
+					fmt.Fprintf(a.Out, "%-40s %-9s public suffix: every site under it would count as this competitor\n",
+						competitor, combined[competitor])
+					continue
+				}
 				fmt.Fprintf(a.Out, "%-40s %s\n", competitor, combined[competitor])
 			}
 			return nil
@@ -127,7 +139,7 @@ func (a *App) competitorsRemoveCommand() *cobra.Command {
 		Short: "Remove a registered competitor domain",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			competitor := normalizeDomain(args[0])
+			competitor := domain.CanonicalConfiguredDomain(args[0])
 			cfg, err := a.LoadConfig()
 			if err != nil {
 				return err
@@ -151,7 +163,7 @@ func (a *App) competitorsRemoveCommand() *cobra.Command {
 			// stored spelling that canonicalises to the requested domain.
 			targets := map[string]bool{competitor: true}
 			for _, storedDomain := range stored {
-				if normalizeDomain(storedDomain) == competitor {
+				if domain.CanonicalConfiguredDomain(storedDomain) == competitor {
 					targets[storedDomain] = true
 				}
 			}
@@ -165,7 +177,7 @@ func (a *App) competitorsRemoveCommand() *cobra.Command {
 			}
 			inConfig := false
 			for _, configured := range cfg.Competitors {
-				if normalizeDomain(configured) == competitor {
+				if domain.CanonicalConfiguredDomain(configured) == competitor {
 					inConfig = true
 				}
 			}
@@ -183,19 +195,4 @@ func (a *App) competitorsRemoveCommand() *cobra.Command {
 			return nil
 		},
 	}
-}
-
-// normalizeDomain reduces a configured or typed competitor to the form the
-// measurement compares: lower case, no scheme or path, no trailing dot, and IDN
-// labels in punycode. It is the same canonicalisation a citation host goes through
-// (domain.CanonicalHost), so "Example.COM." and "例え.テスト" cannot fail to match
-// the hosts they name.
-func normalizeDomain(value string) string {
-	trimmed := strings.ToLower(strings.TrimSpace(value))
-	trimmed = strings.TrimPrefix(trimmed, "https://")
-	trimmed = strings.TrimPrefix(trimmed, "http://")
-	if index := strings.IndexAny(trimmed, "/"); index >= 0 {
-		trimmed = trimmed[:index]
-	}
-	return domain.CanonicalHost(trimmed)
 }

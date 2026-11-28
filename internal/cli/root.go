@@ -184,10 +184,10 @@ func (a *App) Verbosef(format string, args ...any) {
 func (a *App) analysisOptions(ctx context.Context, db *sqlite.DB, cfg *config.Config, project *sqlite.Project) (analysis.Options, error) {
 	competitors := map[string]bool{}
 	for _, configured := range cfg.Competitors {
-		// normalizeDomain is the same canonicalisation `competitors add` applies, so a
-		// value written as a URL in the config cannot become a row that never matches
-		// a citation host.
-		if canonical := normalizeDomain(configured); canonical != "" {
+		// CanonicalConfiguredDomain is the same canonicalisation `competitors add` and
+		// the config validator apply, so a value written as a URL in the config cannot
+		// become a row that never matches a citation host.
+		if canonical := domain.CanonicalConfiguredDomain(configured); canonical != "" {
 			competitors[canonical] = true
 		}
 	}
@@ -196,7 +196,7 @@ func (a *App) analysisOptions(ctx context.Context, db *sqlite.DB, cfg *config.Co
 		return analysis.Options{}, err
 	}
 	for _, storedDomain := range stored {
-		if canonical := normalizeDomain(storedDomain); canonical != "" {
+		if canonical := domain.CanonicalConfiguredDomain(storedDomain); canonical != "" {
 			competitors[canonical] = true
 		}
 	}

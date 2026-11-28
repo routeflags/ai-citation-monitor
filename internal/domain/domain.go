@@ -76,6 +76,24 @@ func CanonicalHost(host string) string {
 	return strings.ToLower(ascii)
 }
 
+// CanonicalConfiguredDomain reduces a domain as written in the configuration or
+// typed on the command line to the form the measurement compares: lower case, no
+// scheme or path, no trailing dot, and international labels in punycode.
+//
+// It is CanonicalHost plus the URL handling a human input needs, and it lives here
+// so the CLI and the configuration validator cannot disagree about what a configured
+// competitor is: `competitors = ["https://co.jp/path"]` has to be the same value as
+// `competitors add co.jp`. The empty string means there was no domain to read.
+func CanonicalConfiguredDomain(value string) string {
+	trimmed := strings.ToLower(strings.TrimSpace(value))
+	trimmed = strings.TrimPrefix(trimmed, "https://")
+	trimmed = strings.TrimPrefix(trimmed, "http://")
+	if index := strings.IndexByte(trimmed, '/'); index >= 0 {
+		trimmed = trimmed[:index]
+	}
+	return CanonicalHost(trimmed)
+}
+
 // IsPublicSuffix reports whether host is a public suffix itself: a registry
 // suffix such as "co.jp" or a hosting suffix such as "github.io".
 //

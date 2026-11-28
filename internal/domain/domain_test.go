@@ -88,6 +88,24 @@ func TestCanonicalHostMapsIDNToPunycode(t *testing.T) {
 	}
 }
 
+// The config and `competitors add` have to canonicalise the same way: a URL or an
+// IDN written in `aicm.toml` must be matched, listed and validated as the host it
+// names, not as the string that was typed.
+func TestCanonicalConfiguredDomain(t *testing.T) {
+	for input, want := range map[string]string{
+		"https://www.rival.example/path": "www.rival.example",
+		" HTTP://Rival.Example. ":        "rival.example",
+		"例え.テスト":                         "xn--r8jz45g.xn--zckzah",
+		"rival.example":                  "rival.example",
+		"https://co.jp/":                 "co.jp",
+		"":                               "",
+	} {
+		if got := CanonicalConfiguredDomain(input); got != want {
+			t.Errorf("CanonicalConfiguredDomain(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
 func TestIsPublicSuffix(t *testing.T) {
 	publicSuffixes := []string{"github.io", "co.jp", "blogspot.com", "com", "s3.amazonaws.com"}
 	for _, host := range publicSuffixes {

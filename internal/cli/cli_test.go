@@ -671,19 +671,96 @@ func TestCompetitorsAddRejectsAPublicSuffix(t *testing.T) {
 	}
 }
 
-// The config and `competitors add` have to canonicalise the same way: a URL or an
-// IDN written in `aicm.toml` must be matched and listed as the host it names.
-func TestNormalizeDomainCanonicalisesInput(t *testing.T) {
-	for input, want := range map[string]string{
-		"https://www.rival.example/path": "www.rival.example",
-		" HTTP://Rival.Example. ":        "rival.example",
-		"例え.テスト":                         "xn--r8jz45g.xn--zckzah",
-		"rival.example":                  "rival.example",
-		"":                               "",
-	} {
-		if got := normalizeDomain(input); got != want {
-			t.Errorf("normalizeDomain(%q) = %q, want %q", input, got, want)
+// A public suffix in aicm.toml is a configuration error, the same as one passed to
+// `competitors add`: a competitor row stands for a whole site (D23), so co.jp would
+// count every customer under it as one competitor. Reading the existing data is not
+// blocked (D26).
+func TestConfigPublicSuffixCompetitorExits2(t *testing.T) {
+	h := newHarness(t)
+	h.importQuestions()
+	configText := readFileString(t, h.configPath)
+	configText = strings.Replace(configText, `competitors = ["rival.example"]`, `competitors = ["co.jp"]`, 1)
+	if err := os.WriteFile(h.configPath, []byte(configText), 0o644); err != nil {
+		t.Fatalf("rewrite config: %v", err)
+	}
+
+	code, _, stderr := h.run("run", "--provider", "openai", "--dry-run")
+	if code != ExitConfig {
+		t.Fatalf("exit = %d, want %d: %s", code, ExitConfig, stderr)
+	}
+	if !strings.Contains(stderr, "public suffix") || !strings.Contains(stderr, "co.jp") {
+		t.Errorf("the error must name the value and the problem: %s", stderr)
+	}
+
+	// The management view still works, and marks the row a report would apply.
+	code, list, stderr := h.run("competitors", "list")
+	if code != ExitOK {
+		t.Fatalf("list = %d: %s", code, stderr)
+	}
+	if !strings.Contains(list, "co.jp") || !strings.Contains(list, "public suffix") {
+		t.Errorf("the list must show the invalid value and why:\n%s", list)
+	}
+}
+
+// `init --competitors` goes through the same validation, whether the value is a bare
+// suffix or a URL that canonicalises to one, and writes nothing when it fails.
+func TestInitRejectsAPublicSuffixCompetitor(t *testing.T) {
+	for _, competitor := range []string{"co.jp", "https://co.jp/path", "github.io"} {
+		h := newHarness(t)
+		out := filepath.Join(h.dir, "new-aicm.toml")
+		code, _, stderr := h.run("init", "--non-interactive", "--site-id", "demo",
+			"--own-domain", "example.shop", "--competitors", competitor, "--skip-db", "--out", out)
+		if code != ExitConfig {
+			t.Fatalf("--competitors %q: exit = %d, want %d: %s", competitor, code, ExitConfig, stderr)
 		}
+		if !strings.Contains(stderr, "public suffix") {
+			t.Errorf("--competitors %q: the error must say why: %s", competitor, stderr)
+		}
+		if _, err := os.Stat(out); !os.IsNotExist(err) {
+			t.Errorf("--competitors %q: an invalid configuration must not be written", competitor)
+		}
+	}
+}
+
+// A row that an older build accepted is not deleted, but `competitors list` has to
+// say that it is invalid and why. The JSON addition is additive: the existing
+// competitors object keeps its shape.
+func TestCompetitorsListMarksExistingInvalidRows(t *testing.T) {
+	h := newHarness(t)
+	configText := readFileString(t, h.configPath)
+	configText = strings.Replace(configText, `competitors = ["rival.example"]`, `competitors = ["co.jp", "rival.example"]`, 1)
+	if err := os.WriteFile(h.configPath, []byte(configText), 0o644); err != nil {
+		t.Fatalf("rewrite config: %v", err)
+	}
+	insert := h.query(`INSERT INTO competitors (project_id, domain, label, source, created_at)
+		VALUES (1, 'github.io', '', 'registered', '2026-11-15T00:00:00Z')`)
+	insert.exec()
+	insert.close()
+
+	code, stdout, stderr := h.run("competitors", "list")
+	if code != ExitOK {
+		t.Fatalf("list = %d: %s", code, stderr)
+	}
+	for _, want := range []string{"co.jp", "github.io", "rival.example", "public suffix"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("the list must contain %q:\n%s", want, stdout)
+		}
+	}
+
+	code, stdout, stderr = h.run("competitors", "list", "--json")
+	if code != ExitOK {
+		t.Fatalf("list --json = %d: %s", code, stderr)
+	}
+	for _, want := range []string{`"competitors"`, `"co.jp"`, `"github.io"`, `"invalid"`} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("the JSON must contain %q:\n%s", want, stdout)
+		}
+	}
+
+	count := h.query(`SELECT COUNT(*) FROM competitors WHERE domain = 'github.io'`)
+	defer count.close()
+	if got := count.int64(); got != 1 {
+		t.Errorf("rows = %d, want 1: list must not delete a row", got)
 	}
 }
 
