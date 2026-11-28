@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"sort"
 
 	"github.com/spf13/cobra"
 
 	"github.com/routeflags/ai-citation-monitor/internal/domain"
+	"github.com/routeflags/ai-citation-monitor/internal/storage/sqlite"
 )
 
 // configuredCompetitors canonicalises the configured competitor list the same way
@@ -160,60 +162,78 @@ func (a *App) competitorsRemoveCommand() *cobra.Command {
 		Short: "Remove a registered competitor domain",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			competitor := domain.CanonicalConfiguredDomain(args[0])
-			cfg, err := a.LoadConfig()
-			if err != nil {
-				return err
-			}
-			db, err := a.OpenDB(cfg)
-			if err != nil {
-				return err
-			}
-			defer db.Close()
-			ctx := cmd.Context()
-			project, err := a.RequireProject(ctx, db)
-			if err != nil {
-				return err
-			}
-			stored, err := db.Competitors(ctx, project.ID)
-			if err != nil {
-				return failf(ExitConfig, "db_unavailable", "%v", err)
-			}
-			// A row recorded before the canonicaliser existed may hold the Unicode form
-			// while the input is now punycode (or the other way round). Remove every
-			// stored spelling that canonicalises to the requested domain.
-			targets := map[string]bool{competitor: true}
-			for _, storedDomain := range stored {
-				if domain.CanonicalConfiguredDomain(storedDomain) == competitor {
-					targets[storedDomain] = true
-				}
-			}
-			removed := false
-			for target := range targets {
-				one, err := db.RemoveCompetitor(ctx, project.ID, target)
-				if err != nil {
-					return failf(ExitConfig, "db_write_failed", "%v", err)
-				}
-				removed = removed || one
-			}
-			inConfig := false
-			for _, configured := range cfg.Competitors {
-				if domain.CanonicalConfiguredDomain(configured) == competitor {
-					inConfig = true
-				}
-			}
-			if a.JSON {
-				return a.PrintJSON(map[string]any{"domain": competitor, "removed": removed, "in_config": inConfig})
-			}
-			if removed {
-				fmt.Fprintf(a.Out, "removed: %s\n", competitor)
-			} else {
-				fmt.Fprintf(a.Out, "not in the database: %s\n", competitor)
-			}
-			if inConfig {
-				fmt.Fprintf(a.Out, "note: %s is also listed in %s; remove it there to stop counting it\n", competitor, cfg.Path)
-			}
-			return nil
+			return a.removeCompetitor(cmd.Context(), domain.CanonicalConfiguredDomain(args[0]))
 		},
+	}
+}
+
+func (a *App) removeCompetitor(ctx context.Context, competitor string) error {
+	cfg, err := a.LoadConfig()
+	if err != nil {
+		return err
+	}
+	db, err := a.OpenDB(cfg)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	project, err := a.RequireProject(ctx, db)
+	if err != nil {
+		return err
+	}
+	stored, err := db.Competitors(ctx, project.ID)
+	if err != nil {
+		return failf(ExitConfig, "db_unavailable", "%v", err)
+	}
+	removed, err := removeStoredCompetitors(ctx, db, project.ID, competitor, stored)
+	if err != nil {
+		return err
+	}
+	inConfig := competitorInConfig(cfg.Competitors, competitor)
+	if a.JSON {
+		return a.PrintJSON(map[string]any{"domain": competitor, "removed": removed, "in_config": inConfig})
+	}
+	a.printRemoval(competitor, cfg.Path, removed, inConfig)
+	return nil
+}
+
+// removeStoredCompetitors deletes the requested domain and every stored spelling
+// that canonicalises to it. A row recorded before the canonicaliser existed may
+// hold the Unicode form while the input is now punycode (or the other way round).
+func removeStoredCompetitors(ctx context.Context, db *sqlite.DB, projectID int64, competitor string, stored []string) (bool, error) {
+	targets := map[string]bool{competitor: true}
+	for _, storedDomain := range stored {
+		if domain.CanonicalConfiguredDomain(storedDomain) == competitor {
+			targets[storedDomain] = true
+		}
+	}
+	removed := false
+	for target := range targets {
+		one, err := db.RemoveCompetitor(ctx, projectID, target)
+		if err != nil {
+			return false, failf(ExitConfig, "db_write_failed", "%v", err)
+		}
+		removed = removed || one
+	}
+	return removed, nil
+}
+
+func competitorInConfig(configured []string, competitor string) bool {
+	for _, value := range configured {
+		if domain.CanonicalConfiguredDomain(value) == competitor {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *App) printRemoval(competitor, configPath string, removed, inConfig bool) {
+	if removed {
+		fmt.Fprintf(a.Out, "removed: %s\n", competitor)
+	} else {
+		fmt.Fprintf(a.Out, "not in the database: %s\n", competitor)
+	}
+	if inConfig {
+		fmt.Fprintf(a.Out, "note: %s is also listed in %s; remove it there to stop counting it\n", competitor, configPath)
 	}
 }

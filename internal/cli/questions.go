@@ -177,48 +177,24 @@ func (a *App) importYAML(cmd *cobra.Command, opts questionImportOptions) error {
 	if err != nil {
 		return failf(ExitConfig, "question_set_unreadable", "%v", err)
 	}
-	errorsOut, warnings := set.Validate(opts.strict)
+	problems, warnings := set.Validate(opts.strict)
 	for _, warning := range warnings {
 		fmt.Fprintf(a.Err, "warning: %s\n", warning)
 	}
-	if len(errorsOut) > 0 {
-		for _, problem := range errorsOut {
+	if len(problems) > 0 {
+		for _, problem := range problems {
 			fmt.Fprintf(a.Err, "NG: %s\n", problem)
 		}
 		return failf(ExitGeneral, "question_set_invalid",
-			"the question set is not usable (%d problems); nothing was written", len(errorsOut))
+			"the question set is not usable (%d problems); nothing was written", len(problems))
 	}
 
-	questions := set.Questions
-	if opts.stage != "" {
-		questions = set.StageQuestions(opts.stage)
-		if len(questions) == 0 {
-			return failf(ExitConfig, "question_set_invalid",
-				"stage %q has no questions in %s", opts.stage, opts.file)
-		}
-	}
-
-	if a.JSON {
-		if opts.check || opts.dryRun {
-			return a.PrintJSON(map[string]any{
-				"summary": set.Summarise(), "errors": errorsOut, "warnings": warnings,
-				"imported": 0,
-			})
-		}
+	questions, err := questionsToImport(set, opts)
+	if err != nil {
+		return err
 	}
 	if opts.check || opts.dryRun {
-		if !a.JSON {
-			summary := set.Summarise()
-			fmt.Fprintf(a.Out, "set_version: %s\nsite_id: %s\nown_domain: %s\nmarket: %s\nquestions: %d\n",
-				summary.SetVersion, summary.SiteID, summary.OwnDomain, summary.Market, summary.Questions)
-			fmt.Fprintf(a.Out, "brand terms status: %s\n", brandTermsStatusDisplay(summary.BrandTermsStatus))
-			for _, stage := range summary.Stages {
-				fmt.Fprintf(a.Out, "stage %s: %d questions x %d run = %d round trips per provider\n",
-					stage.Name, stage.Questions, stage.RunsPerQuestion, stage.RoundTrips)
-			}
-			fmt.Fprintln(a.Out, "OK: the question set is usable (nothing was written)")
-		}
-		return nil
+		return a.printQuestionSetCheck(set, problems, warnings)
 	}
 
 	cfg, err := a.LoadConfig()
@@ -240,41 +216,20 @@ func (a *App) importYAML(cmd *cobra.Command, opts questionImportOptions) error {
 		return err
 	}
 
-	inserted, updated := 0, 0
-	for _, item := range questions {
-		exists, err := db.QuestionExists(ctx, project.ID, item.Key)
-		if err != nil {
-			return failf(ExitConfig, "db_unavailable", "%v", err)
-		}
-		if _, err := db.UpsertQuestion(ctx, project.ID, toStoreQuestion(item)); err != nil {
-			return failf(ExitConfig, "db_write_failed", "%v", err)
-		}
-		if exists {
-			updated++
-		} else {
-			inserted++
-		}
+	inserted, updated, err := applyQuestions(ctx, db, project.ID, questions)
+	if err != nil {
+		return err
 	}
 	status, err := db.RecordQuestionSet(ctx, project.ID, set.SetVersion, set.SHA256, opts.file,
 		strings.TrimSpace(set.BrandTermsStatus))
 	if err != nil {
 		return failf(ExitConfig, "db_write_failed", "%v", err)
 	}
-	// The record is append-only, so a set that was imported before the status was
-	// recorded keeps the empty value even when the same bytes are imported again.
-	// Print what the record says, and say so when the file disagrees: telling the
-	// operator the file's value would claim a record that does not exist.
 	recordedStatus, err := recordedBrandTermsStatus(ctx, db, set.SHA256)
 	if err != nil {
 		return failf(ExitConfig, "db_unavailable", "%v", err)
 	}
-	declaredStatus := strings.TrimSpace(set.BrandTermsStatus)
-	if recordedStatus != declaredStatus {
-		fmt.Fprintf(a.Err, "warning: the question set is already recorded with brand terms status %q; this file declares %q. "+
-			"A recorded set is not updated (append-only), so a report keeps reading the recorded value; "+
-			"change the question set (and its set_version) to record the new status.\n",
-			brandTermsStatusDisplay(recordedStatus), brandTermsStatusDisplay(declaredStatus))
-	}
+	a.warnOnBrandTermsMismatch(recordedStatus, set.BrandTermsStatus)
 
 	if a.JSON {
 		return a.PrintJSON(map[string]any{
@@ -287,6 +242,79 @@ func (a *App) importYAML(cmd *cobra.Command, opts questionImportOptions) error {
 	fmt.Fprintf(a.Out, "sha256: %s\n", set.SHA256)
 	fmt.Fprintf(a.Out, "brand terms status: %s\n", brandTermsStatusDisplay(recordedStatus))
 	return nil
+}
+
+// questionsToImport returns the questions to write: the whole set, or the ones of
+// one stage.
+func questionsToImport(set *question.Set, opts questionImportOptions) ([]question.Question, error) {
+	if opts.stage == "" {
+		return set.Questions, nil
+	}
+	questions := set.StageQuestions(opts.stage)
+	if len(questions) == 0 {
+		return nil, failf(ExitConfig, "question_set_invalid",
+			"stage %q has no questions in %s", opts.stage, opts.file)
+	}
+	return questions, nil
+}
+
+// printQuestionSetCheck prints the --check / --dry-run report. The warnings were
+// already printed as they were found; the JSON form carries them, and the problems,
+// so a caller reads one document.
+func (a *App) printQuestionSetCheck(set *question.Set, problems, warnings []string) error {
+	if a.JSON {
+		return a.PrintJSON(map[string]any{
+			"summary": set.Summarise(), "errors": problems, "warnings": warnings,
+			"imported": 0,
+		})
+	}
+	summary := set.Summarise()
+	fmt.Fprintf(a.Out, "set_version: %s\nsite_id: %s\nown_domain: %s\nmarket: %s\nquestions: %d\n",
+		summary.SetVersion, summary.SiteID, summary.OwnDomain, summary.Market, summary.Questions)
+	fmt.Fprintf(a.Out, "brand terms status: %s\n", brandTermsStatusDisplay(summary.BrandTermsStatus))
+	for _, stage := range summary.Stages {
+		fmt.Fprintf(a.Out, "stage %s: %d questions x %d run = %d round trips per provider\n",
+			stage.Name, stage.Questions, stage.RunsPerQuestion, stage.RoundTrips)
+	}
+	fmt.Fprintln(a.Out, "OK: the question set is usable (nothing was written)")
+	return nil
+}
+
+// applyQuestions upserts each question and counts what was new. Both import
+// formats write the same fields and report the same totals, so the loop lives here
+// once.
+func applyQuestions(ctx context.Context, db *sqlite.DB, projectID int64, items []question.Question) (inserted, updated int, err error) {
+	for _, item := range items {
+		exists, err := db.QuestionExists(ctx, projectID, item.Key)
+		if err != nil {
+			return 0, 0, failf(ExitConfig, "db_unavailable", "%v", err)
+		}
+		if _, err := db.UpsertQuestion(ctx, projectID, toStoreQuestion(item)); err != nil {
+			return 0, 0, failf(ExitConfig, "db_write_failed", "%v", err)
+		}
+		if exists {
+			updated++
+		} else {
+			inserted++
+		}
+	}
+	return inserted, updated, nil
+}
+
+// warnOnBrandTermsMismatch says when the record disagrees with the file. The record
+// is append-only, so a set that was imported before the status was recorded keeps
+// the empty value even when the same bytes are imported again. Print what the record
+// says, and say so when the file disagrees: telling the operator the file's value
+// would claim a record that does not exist.
+func (a *App) warnOnBrandTermsMismatch(recordedStatus, declaredStatus string) {
+	declared := strings.TrimSpace(declaredStatus)
+	if recordedStatus == declared {
+		return
+	}
+	fmt.Fprintf(a.Err, "warning: the question set is already recorded with brand terms status %q; this file declares %q. "+
+		"A recorded set is not updated (append-only), so a report keeps reading the recorded value; "+
+		"change the question set (and its set_version) to record the new status.\n",
+		brandTermsStatusDisplay(recordedStatus), brandTermsStatusDisplay(declared))
 }
 
 func (a *App) importCSV(cmd *cobra.Command, opts questionImportOptions) error {
@@ -346,23 +374,14 @@ func (a *App) importCSV(cmd *cobra.Command, opts questionImportOptions) error {
 	if err != nil {
 		return err
 	}
-	inserted, updated := 0, 0
-	for _, item := range questions {
-		if item.Language == "" {
-			item.Language = cfg.Language
+	for index := range questions {
+		if questions[index].Language == "" {
+			questions[index].Language = cfg.Language
 		}
-		exists, err := db.QuestionExists(ctx, project.ID, item.Key)
-		if err != nil {
-			return failf(ExitConfig, "db_unavailable", "%v", err)
-		}
-		if _, err := db.UpsertQuestion(ctx, project.ID, toStoreQuestion(item)); err != nil {
-			return failf(ExitConfig, "db_write_failed", "%v", err)
-		}
-		if exists {
-			updated++
-		} else {
-			inserted++
-		}
+	}
+	inserted, updated, err := applyQuestions(ctx, db, project.ID, questions)
+	if err != nil {
+		return err
 	}
 	if a.JSON {
 		return a.PrintJSON(map[string]any{"inserted": inserted, "updated": updated})

@@ -298,10 +298,26 @@ const (
 
 // Build groups runs and citations. It never aggregates across groups.
 func Build(runs []sqlite.Run, citations []sqlite.CitationRow, opts Options) []Group {
-	type acc struct {
-		runs       []sqlite.Run
-		identities []MeasurementIdentity
+	buckets, order := bucketRuns(runs)
+	byRun := citationsByRun(citations)
+	sort.Strings(order)
+	groups := make([]Group, 0, len(order))
+	for _, key := range order {
+		groups = append(groups, buildGroup(buckets[key], byRun, opts))
 	}
+	return groups
+}
+
+// acc collects one group's runs and measurement identities while Build sorts the
+// runs into groups.
+type acc struct {
+	runs       []sqlite.Run
+	identities []MeasurementIdentity
+}
+
+// bucketRuns splits the runs into their provider x model x stage groups, keeping
+// the order the groups were first seen.
+func bucketRuns(runs []sqlite.Run) (map[string]*acc, []string) {
 	buckets := map[string]*acc{}
 	order := []string{}
 	for _, run := range runs {
@@ -313,105 +329,121 @@ func Build(runs []sqlite.Run, citations []sqlite.CitationRow, opts Options) []Gr
 		buckets[key].runs = append(buckets[key].runs, run)
 		buckets[key].identities = append(buckets[key].identities, IdentityOf(run))
 	}
+	return buckets, order
+}
+
+func citationsByRun(citations []sqlite.CitationRow) map[int64][]sqlite.CitationRow {
 	byRun := map[int64][]sqlite.CitationRow{}
 	for _, citation := range citations {
 		byRun[citation.RunID] = append(byRun[citation.RunID], citation)
 	}
+	return byRun
+}
 
-	sort.Slice(order, func(i, j int) bool { return order[i] < order[j] })
-	groups := make([]Group, 0, len(order))
-	for _, key := range order {
-		bucket := buckets[key]
-		first := bucket.runs[0]
-		group := Group{Provider: first.Provider, Model: first.Model, Stage: first.Stage}
-		// A group is provider x model x stage by design (invariant 2), so records of
-		// different measurement conditions can land in it. The rates stay as they are;
-		// this list is what stops the mix from being invisible (D24).
-		group.MixedConditions = MixedConditions(bucket.identities)
+// buildGroup computes one group's totals. Each rate divides runs inside this
+// group, by the denominator its definition names.
+func buildGroup(bucket *acc, byRun map[int64][]sqlite.CitationRow, opts Options) Group {
+	first := bucket.runs[0]
+	group := Group{Provider: first.Provider, Model: first.Model, Stage: first.Stage}
+	// A group is provider x model x stage by design (invariant 2), so records of
+	// different measurement conditions can land in it. The rates stay as they are;
+	// this list is what stops the mix from being invisible (D24).
+	group.MixedConditions = MixedConditions(bucket.identities)
 
-		judgedRuns := make([]sqlite.Run, 0, len(bucket.runs))
-		groupCitations := make([]sqlite.CitationRow, 0, 16)
-		perQuestion := map[string][]sqlite.Run{}
-		questionOrder := []string{}
-		questionMeta := map[string]sqlite.Run{}
-		unknownQuestions := map[string]bool{}
-		for _, run := range bucket.runs {
-			group.RunsTotal++
-			switch run.Status {
-			case sqliteStatusSuccess:
-				group.RunsSuccess++
-			case "error":
-				group.RunsError++
-			case "cancelled":
-				group.RunsCancelled++
+	judged := make([]sqlite.Run, 0, len(bucket.runs))
+	citations := make([]sqlite.CitationRow, 0, 16)
+	perQuestion := map[string][]sqlite.Run{}
+	unknownQuestions := map[string]bool{}
+	for _, run := range bucket.runs {
+		group.countRun(run)
+		if run.CitationObservability != observabilityObserved {
+			// unknown is status-independent: a failed call has no observed metadata
+			// either, so one run can be counted here and in RunsError. Only a
+			// successful unknown answer is an "unknown question" for coverage
+			// (docs/metrics.md).
+			group.RunsUnknown++
+			if run.Status == sqliteStatusSuccess {
+				// A failed run is a failure, not an "unknown answer".
+				unknownQuestions[run.QuestionKey] = true
 			}
-			if run.CitationObservability != observabilityObserved {
-				// unknown is status-independent: a failed call has no observed metadata either,
-				// so one run can be counted here and in RunsError. Only a successful unknown
-				// answer is an "unknown question" for coverage (docs/metrics.md).
-				group.RunsUnknown++
-				if run.Status == sqliteStatusSuccess {
-					// A failed run is a failure, not an "unknown answer".
-					unknownQuestions[run.QuestionKey] = true
-				}
-			}
-			if !Judgeable(run) {
-				continue
-			}
-			judgedRuns = append(judgedRuns, run)
-			groupCitations = append(groupCitations, byRun[run.ID]...)
-			if _, seen := perQuestion[run.QuestionKey]; !seen {
-				questionOrder = append(questionOrder, run.QuestionKey)
-				questionMeta[run.QuestionKey] = run
-			}
-			perQuestion[run.QuestionKey] = append(perQuestion[run.QuestionKey], run)
+			continue
 		}
-
-		cited := 0
-		for _, run := range judgedRuns {
-			if run.CitedOwn {
-				cited++
-			}
+		if !Judgeable(run) {
+			continue
 		}
-		group.CitedOwn = NewRate(cited, len(judgedRuns))
-
-		branded := 0
-		successRuns := 0
-		for _, run := range bucket.runs {
-			if run.Status != sqliteStatusSuccess {
-				continue
-			}
-			successRuns++
-			if run.BrandMentioned {
-				branded++
-			}
-		}
-		group.BrandMentioned = NewRate(branded, successRuns)
-
-		sort.Strings(questionOrder)
-		group.PerQuestion = make([]QuestionRate, 0, len(questionOrder))
-		for _, key := range questionOrder {
-			questionRuns := perQuestion[key]
-			hits := 0
-			for _, run := range questionRuns {
-				if run.CitedOwn {
-					hits++
-				}
-			}
-			meta := questionMeta[key]
-			group.PerQuestion = append(group.PerQuestion, QuestionRate{
-				QuestionKey:  key,
-				QuestionText: meta.QuestionText,
-				Category:     meta.Category,
-				Rate:         NewRate(hits, len(questionRuns)),
-			})
-		}
-
-		group.Coverage = buildCoverage(judgedRuns, unknownQuestions, perQuestion, opts.Roster)
-		group.DomainShare, group.CompetitorRate, group.CitationTotal = buildDomains(groupCitations, judgedRuns, opts)
-		groups = append(groups, group)
+		judged = append(judged, run)
+		citations = append(citations, byRun[run.ID]...)
+		perQuestion[run.QuestionKey] = append(perQuestion[run.QuestionKey], run)
 	}
-	return groups
+
+	group.CitedOwn = citedOwnRate(judged)
+	group.BrandMentioned = brandMentionedRate(bucket.runs)
+	group.PerQuestion = questionRates(perQuestion)
+	group.Coverage = buildCoverage(judged, unknownQuestions, perQuestion, opts.Roster)
+	group.DomainShare, group.CompetitorRate, group.CitationTotal = buildDomains(citations, judged, opts)
+	return group
+}
+
+// countRun adds one run to the status totals. RunsUnknown is counted separately
+// because it does not depend on the status.
+func (g *Group) countRun(run sqlite.Run) {
+	g.RunsTotal++
+	switch run.Status {
+	case sqliteStatusSuccess:
+		g.RunsSuccess++
+	case "error":
+		g.RunsError++
+	case "cancelled":
+		g.RunsCancelled++
+	}
+}
+
+// citedOwnRate is the citation rate over the runs the provider gave metadata for.
+func citedOwnRate(judged []sqlite.Run) Rate {
+	cited := 0
+	for _, run := range judged {
+		if run.CitedOwn {
+			cited++
+		}
+	}
+	return NewRate(cited, len(judged))
+}
+
+// brandMentionedRate is the mention rate over the successful runs.
+func brandMentionedRate(runs []sqlite.Run) Rate {
+	branded, success := 0, 0
+	for _, run := range runs {
+		if run.Status != sqliteStatusSuccess {
+			continue
+		}
+		success++
+		if run.BrandMentioned {
+			branded++
+		}
+	}
+	return NewRate(branded, success)
+}
+
+// questionRates is the per-question view, in question-key order. The first judged
+// run carries the text and the category, which do not change between repeats.
+func questionRates(perQuestion map[string][]sqlite.Run) []QuestionRate {
+	keys := make([]string, 0, len(perQuestion))
+	for key := range perQuestion {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	rates := make([]QuestionRate, 0, len(keys))
+	for _, key := range keys {
+		runs := perQuestion[key]
+		meta := runs[0]
+		rates = append(rates, QuestionRate{
+			QuestionKey:  key,
+			QuestionText: meta.QuestionText,
+			Category:     meta.Category,
+			Rate:         citedOwnRate(runs),
+		})
+	}
+	return rates
 }
 
 func buildCoverage(judgedRuns []sqlite.Run, unknownOnly map[string]bool, perQuestion map[string][]sqlite.Run, roster []string) Coverage {
@@ -465,13 +497,22 @@ func buildCoverage(judgedRuns []sqlite.Run, unknownOnly map[string]bool, perQues
 }
 
 func buildDomains(citations []sqlite.CitationRow, judgedRuns []sqlite.Run, opts Options) ([]DomainShare, []DomainRate, int) {
+	shares := hostShares(citations, opts)
+	perRun, aggregated := aggregationDomains(citations, opts)
+	registered := registeredCompetitors(opts)
+	for key := range registered {
+		aggregated[key] = true
+	}
+	return shares, domainRates(aggregated, perRun, registered, judgedRuns, opts), len(citations)
+}
+
+// hostShares is the per-host share table: every host a citation names, most cited
+// first. A citation without a hostname is its own "(no host)" row, classified as
+// unknown because there is nothing to classify.
+func hostShares(citations []sqlite.CitationRow, opts Options) []DomainShare {
 	shareCounts := map[string]int{}
 	for _, citation := range citations {
-		name := "(no host)"
-		if citation.Hostname != nil && *citation.Hostname != "" {
-			name = *citation.Hostname
-		}
-		shareCounts[name]++
+		shareCounts[hostName(citation)]++
 	}
 	total := len(citations)
 	names := make([]string, 0, len(shareCounts))
@@ -499,48 +540,67 @@ func buildDomains(citations []sqlite.CitationRow, judgedRuns []sqlite.Run, opts 
 			Share:          NewRate(shareCounts[name], total),
 		})
 	}
+	return shares
+}
 
-	perRunDomains := map[int64]map[string]bool{}
+func hostName(citation sqlite.CitationRow) string {
+	if citation.Hostname != nil && *citation.Hostname != "" {
+		return *citation.Hostname
+	}
+	return "(no host)"
+}
+
+// aggregationDomains indexes the citations by the site a domain rate counts: the
+// registered site, not the individual host. The share table stays per host; this
+// is what makes example.com count www.example.com and blog.example.com (D23), and
+// the key a citation falls under is the same key the report shows.
+func aggregationDomains(citations []sqlite.CitationRow, opts Options) (map[int64]map[string]bool, map[string]bool) {
+	perRun := map[int64]map[string]bool{}
 	aggregated := map[string]bool{}
 	for _, citation := range citations {
 		if citation.Hostname == nil || *citation.Hostname == "" {
 			continue
 		}
-		// The rate is counted per site, while the share table above stays per host:
-		// registering example.com has to count www.example.com and blog.example.com
-		// (D23), and the key a citation falls under is the same key the report shows.
 		key := domain.AggregationDomain(*citation.Hostname, opts.OwnDomain, opts.Subdomains, opts.Competitors)
 		if key == "" {
 			continue
 		}
-		if perRunDomains[citation.RunID] == nil {
-			perRunDomains[citation.RunID] = map[string]bool{}
+		if perRun[citation.RunID] == nil {
+			perRun[citation.RunID] = map[string]bool{}
 		}
-		perRunDomains[citation.RunID][key] = true
+		perRun[citation.RunID][key] = true
 		aggregated[key] = true
 	}
+	return perRun, aggregated
+}
 
+// registeredCompetitors lists the aggregation keys the configuration names. A
+// domain classified as ours is not a competitor row, even when the same name also
+// appears in the competitor list (D23 §7). The classification column decides how
+// the row is read, so `registered` must not contradict it.
+func registeredCompetitors(opts Options) map[string]bool {
 	registered := map[string]bool{}
 	for _, competitor := range opts.Competitors {
 		key := domain.AggregationDomain(competitor, opts.OwnDomain, opts.Subdomains, opts.Competitors)
 		if key == "" {
 			continue
 		}
-		// A domain that is classified as ours is not a competitor row, even when the same
-		// name also appears in the competitor list (D23 §7). The classification column
-		// decides how the row is read, so `registered` must not contradict it.
 		if domain.ClassifyDomain(key, opts.OwnDomain, opts.Subdomains, nil) == "own" {
 			continue
 		}
 		registered[key] = true
-		aggregated[key] = true
 	}
+	return registered
+}
 
+// domainRates is the per-site citation rate over the judged runs, most cited
+// first. A run counts once per site however many citations of it the answer had.
+func domainRates(aggregated map[string]bool, perRun map[int64]map[string]bool, registered map[string]bool, judgedRuns []sqlite.Run, opts Options) []DomainRate {
 	rates := make([]DomainRate, 0, len(aggregated))
 	for name := range aggregated {
 		hits := 0
 		for _, run := range judgedRuns {
-			if perRunDomains[run.ID][name] {
+			if perRun[run.ID][name] {
 				hits++
 			}
 		}
@@ -558,5 +618,5 @@ func buildDomains(citations []sqlite.CitationRow, judgedRuns []sqlite.Run, opts 
 		}
 		return rates[i].Domain < rates[j].Domain
 	})
-	return shares, rates, total
+	return rates
 }

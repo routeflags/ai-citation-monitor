@@ -173,8 +173,16 @@ func Load(path string) (*Config, []string, error) {
 	return cfg, warnings, nil
 }
 
-// ApplyDefaults fills the values a user does not have to write.
+// ApplyDefaults fills the values a user does not have to write. The sections are
+// applied in order because the report language reads the site language.
 func (c *Config) ApplyDefaults() {
+	c.applySiteDefaults()
+	c.applyLimitDefaults()
+	c.applyReportDefaults()
+	c.applyProviderDefaults()
+}
+
+func (c *Config) applySiteDefaults() {
 	if c.Market == "" {
 		c.Market = DefaultMarket
 	}
@@ -187,6 +195,9 @@ func (c *Config) ApplyDefaults() {
 	if c.ReportDir == "" {
 		c.ReportDir = DefaultReportDir
 	}
+}
+
+func (c *Config) applyLimitDefaults() {
 	if c.Limits.Concurrency <= 0 {
 		c.Limits.Concurrency = DefaultConcurrency
 	}
@@ -197,71 +208,65 @@ func (c *Config) ApplyDefaults() {
 	if c.Limits.MaxRetries == 0 {
 		c.Limits.MaxRetries = DefaultMaxRetries
 	}
+}
+
+func (c *Config) applyReportDefaults() {
 	// The report language follows the site language unless [report] language says
 	// otherwise: an operator who sets --language ja expects Japanese numbers, not
 	// an English report that disagrees with the question set.
-	if c.Report.Language == "" {
-		if c.Language != "" {
-			c.Report.Language = c.Language
-		} else {
-			c.Report.Language = "en"
-		}
+	if c.Report.Language != "" {
+		return
 	}
-	if c.Providers.OpenAI.APIKeyEnv == "" {
-		c.Providers.OpenAI.APIKeyEnv = "OPENAI_API_KEY"
+	c.Report.Language = "en"
+	if c.Language != "" {
+		c.Report.Language = c.Language
 	}
-	if c.Providers.Gemini.APIKeyEnv == "" {
-		c.Providers.Gemini.APIKeyEnv = "GEMINI_API_KEY"
-	}
-	if c.Providers.OpenAI.BaseURL == "" {
-		c.Providers.OpenAI.BaseURL = "https://api.openai.com/v1"
-	}
-	if c.Providers.Gemini.BaseURL == "" {
-		c.Providers.Gemini.BaseURL = "https://generativelanguage.googleapis.com/v1beta"
-	}
-	if c.Providers.OpenAI.TimeoutSeconds <= 0 {
-		c.Providers.OpenAI.TimeoutSeconds = DefaultTimeoutSecond
-	}
-	if c.Providers.Gemini.TimeoutSeconds <= 0 {
-		c.Providers.Gemini.TimeoutSeconds = DefaultTimeoutSecond
-	}
-	if c.Providers.Anthropic.APIKeyEnv == "" {
-		c.Providers.Anthropic.APIKeyEnv = "ANTHROPIC_API_KEY"
-	}
-	if c.Providers.Anthropic.BaseURL == "" {
-		c.Providers.Anthropic.BaseURL = "https://api.anthropic.com"
-	}
-	if c.Providers.Anthropic.TimeoutSeconds <= 0 {
-		c.Providers.Anthropic.TimeoutSeconds = DefaultTimeoutSecond
-	}
-	if c.Providers.Anthropic.MaxTokens <= 0 {
-		c.Providers.Anthropic.MaxTokens = anthropic.DefaultMaxTokens
-	}
-	if c.Providers.Anthropic.MaxUses <= 0 {
-		c.Providers.Anthropic.MaxUses = anthropic.DefaultMaxUses
-	}
-	if c.Providers.Perplexity.APIKeyEnv == "" {
-		c.Providers.Perplexity.APIKeyEnv = "PERPLEXITY_API_KEY"
-	}
-	if c.Providers.Perplexity.BaseURL == "" {
-		// The Agent API is the surface this build speaks (`/agent` is appended by the
-		// adapter); `/v1/responses` is only an OpenAI-compatible alias.
-		c.Providers.Perplexity.BaseURL = "https://api.perplexity.ai/v1"
-	}
-	if c.Providers.Perplexity.TimeoutSeconds <= 0 {
-		c.Providers.Perplexity.TimeoutSeconds = DefaultTimeoutSecond
-	}
-	if c.Providers.Grok.APIKeyEnv == "" {
-		c.Providers.Grok.APIKeyEnv = "XAI_API_KEY"
-	}
-	if c.Providers.Grok.BaseURL == "" {
-		c.Providers.Grok.BaseURL = "https://api.x.ai/v1"
-	}
-	if c.Providers.Grok.TimeoutSeconds <= 0 {
-		c.Providers.Grok.TimeoutSeconds = DefaultTimeoutSecond
-	}
+}
+
+func (c *Config) applyProviderDefaults() {
+	c.Providers.OpenAI.applyDefaults("OPENAI_API_KEY", "https://api.openai.com/v1")
+	c.Providers.Gemini.applyDefaults("GEMINI_API_KEY", "https://generativelanguage.googleapis.com/v1beta")
+	c.Providers.Anthropic.applyDefaults("ANTHROPIC_API_KEY", "https://api.anthropic.com")
+	// The Agent API is the surface this build speaks (`/agent` is appended by the
+	// adapter); `/v1/responses` is only an OpenAI-compatible alias.
+	c.Providers.Perplexity.applyDefaults("PERPLEXITY_API_KEY", "https://api.perplexity.ai/v1")
+	c.Providers.Grok.applyDefaults("XAI_API_KEY", "https://api.x.ai/v1")
 	// The model name is never defaulted: a guessed model is a measurement of
 	// something the operator did not choose (see docs/providers.md).
+}
+
+// applyDefaults fills one provider block with the values this build speaks.
+func (p *ProviderConfig) applyDefaults(apiKeyEnv, baseURL string) {
+	if p.APIKeyEnv == "" {
+		p.APIKeyEnv = apiKeyEnv
+	}
+	if p.BaseURL == "" {
+		p.BaseURL = baseURL
+	}
+	if p.TimeoutSeconds <= 0 {
+		p.TimeoutSeconds = DefaultTimeoutSecond
+	}
+}
+
+// applyDefaults fills the Claude block. max_tokens and max_uses have no shared
+// equivalent: the Messages API requires the first, and the server-side web search
+// tool takes the second.
+func (p *AnthropicConfig) applyDefaults(apiKeyEnv, baseURL string) {
+	if p.APIKeyEnv == "" {
+		p.APIKeyEnv = apiKeyEnv
+	}
+	if p.BaseURL == "" {
+		p.BaseURL = baseURL
+	}
+	if p.TimeoutSeconds <= 0 {
+		p.TimeoutSeconds = DefaultTimeoutSecond
+	}
+	if p.MaxTokens <= 0 {
+		p.MaxTokens = anthropic.DefaultMaxTokens
+	}
+	if p.MaxUses <= 0 {
+		p.MaxUses = anthropic.DefaultMaxUses
+	}
 }
 
 // Problems lists what makes the configuration unusable for a measurement: a setting

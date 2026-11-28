@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -69,13 +70,7 @@ environment variable that carries the key (for example OPENAI_API_KEY).`,
 
 func (a *App) runInit(cmd *cobra.Command, opts initOptions) error {
 	ctx := cmd.Context()
-	path := opts.out
-	if path == "" {
-		path = a.ConfigPath
-	}
-	if path == "" {
-		path = "aicm.toml"
-	}
+	path := a.initConfigPath(opts)
 
 	if _, err := os.Stat(path); err == nil && !opts.force {
 		return failf(ExitConfig, "config_exists",
@@ -87,46 +82,12 @@ func (a *App) runInit(cmd *cobra.Command, opts initOptions) error {
 		cfg = existing
 	}
 
-	interactive := !opts.nonInteractive && isTerminal(a.In)
-	if interactive {
+	if !opts.nonInteractive && isTerminal(a.In) {
 		if err := a.prompt(cfg); err != nil {
 			return err
 		}
 	}
-
-	if opts.siteID != "" {
-		cfg.SiteID = opts.siteID
-	}
-	if opts.siteName != "" {
-		cfg.SiteName = opts.siteName
-	}
-	if opts.ownDomain != "" {
-		cfg.OwnDomain = opts.ownDomain
-	}
-	// Only override what the operator actually passed: a default value must not
-	// silently replace what the existing configuration already says.
-	if cmd.Flags().Changed("market") {
-		cfg.Market = opts.market
-	}
-	if cmd.Flags().Changed("language") {
-		cfg.Language = opts.language
-	}
-	if cmd.Flags().Changed("report-language") {
-		cfg.Report.Language = opts.reportLanguage
-	}
-	if len(opts.brandTerms) > 0 {
-		cfg.BrandTerms = opts.brandTerms
-	}
-	if len(opts.competitors) > 0 {
-		cfg.Competitors = opts.competitors
-	}
-	if cmd.Flags().Changed("db-path") {
-		cfg.DB = opts.dbPath
-	}
-	if cmd.Flags().Changed("report-dir") {
-		cfg.ReportDir = opts.reportDir
-	}
-
+	applyInitFlags(cmd, cfg, opts)
 	cfg.ApplyDefaults()
 
 	if problems := cfg.Problems(); len(problems) > 0 {
@@ -141,20 +102,9 @@ func (a *App) runInit(cmd *cobra.Command, opts initOptions) error {
 		return failf(ExitConfig, "config_write_failed", "cannot write %s: %v", path, err)
 	}
 
-	createdDB := ""
-	if !opts.skipDB {
-		db, err := sqlite.Open(cfg.DB)
-		if err != nil {
-			return failf(ExitConfig, "db_unavailable", "cannot open database %s: %v", cfg.DB, err)
-		}
-		defer db.Close()
-		if _, err := db.EnsureProject(ctx, sqlite.Project{
-			SiteID: cfg.SiteID, Name: cfg.SiteName, OwnDomain: cfg.OwnDomain,
-			Subdomains: cfg.HasSubdomains(), Market: cfg.Market, Language: cfg.Language,
-		}); err != nil {
-			return failf(ExitConfig, "db_unavailable", "cannot create the project row: %v", err)
-		}
-		createdDB = db.Path()
+	createdDB, err := createProjectRow(ctx, cfg, opts.skipDB)
+	if err != nil {
+		return err
 	}
 
 	if a.JSON {
@@ -165,7 +115,80 @@ func (a *App) runInit(cmd *cobra.Command, opts initOptions) error {
 			"own_domain": cfg.OwnDomain,
 		})
 	}
+	a.printInitNextSteps(cfg, path, createdDB)
+	return nil
+}
 
+// initConfigPath resolves the file `init` writes: --out wins, then the --config
+// path, then the default name in the working directory.
+func (a *App) initConfigPath(opts initOptions) string {
+	if opts.out != "" {
+		return opts.out
+	}
+	if a.ConfigPath != "" {
+		return a.ConfigPath
+	}
+	return "aicm.toml"
+}
+
+// applyInitFlags overrides the loaded configuration with what the operator passed.
+// A flag that was not passed must not replace what the existing file already says,
+// so the defaults shown in --help stay out of the written file.
+func applyInitFlags(cmd *cobra.Command, cfg *config.Config, opts initOptions) {
+	if opts.siteID != "" {
+		cfg.SiteID = opts.siteID
+	}
+	if opts.siteName != "" {
+		cfg.SiteName = opts.siteName
+	}
+	if opts.ownDomain != "" {
+		cfg.OwnDomain = opts.ownDomain
+	}
+	changed := cmd.Flags().Changed
+	if changed("market") {
+		cfg.Market = opts.market
+	}
+	if changed("language") {
+		cfg.Language = opts.language
+	}
+	if changed("report-language") {
+		cfg.Report.Language = opts.reportLanguage
+	}
+	if len(opts.brandTerms) > 0 {
+		cfg.BrandTerms = opts.brandTerms
+	}
+	if len(opts.competitors) > 0 {
+		cfg.Competitors = opts.competitors
+	}
+	if changed("db-path") {
+		cfg.DB = opts.dbPath
+	}
+	if changed("report-dir") {
+		cfg.ReportDir = opts.reportDir
+	}
+}
+
+// createProjectRow writes the project row and returns the database path. With
+// --skip-db it writes nothing and returns "".
+func createProjectRow(ctx context.Context, cfg *config.Config, skipDB bool) (string, error) {
+	if skipDB {
+		return "", nil
+	}
+	db, err := sqlite.Open(cfg.DB)
+	if err != nil {
+		return "", failf(ExitConfig, "db_unavailable", "cannot open database %s: %v", cfg.DB, err)
+	}
+	defer db.Close()
+	if _, err := db.EnsureProject(ctx, sqlite.Project{
+		SiteID: cfg.SiteID, Name: cfg.SiteName, OwnDomain: cfg.OwnDomain,
+		Subdomains: cfg.HasSubdomains(), Market: cfg.Market, Language: cfg.Language,
+	}); err != nil {
+		return "", failf(ExitConfig, "db_unavailable", "cannot create the project row: %v", err)
+	}
+	return db.Path(), nil
+}
+
+func (a *App) printInitNextSteps(cfg *config.Config, path, createdDB string) {
 	fmt.Fprintf(a.Out, "config: %s\n", path)
 	if createdDB != "" {
 		fmt.Fprintf(a.Out, "db:     %s\n", createdDB)
@@ -175,7 +198,6 @@ func (a *App) runInit(cmd *cobra.Command, opts initOptions) error {
 	fmt.Fprintf(a.Out, "  2. export %s=...   (never put the key in the config)\n", cfg.Providers.OpenAI.APIKeyEnv)
 	fmt.Fprintf(a.Out, "  3. aicm run --provider openai --repeat 1 --dry-run\n")
 	fmt.Fprintf(a.Out, "  4. aicm report --period 30d\n")
-	return nil
 }
 
 func (a *App) prompt(cfg *config.Config) error {

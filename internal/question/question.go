@@ -96,30 +96,59 @@ func (s *Set) HasSubdomains() bool {
 	return *s.Subdomains
 }
 
-// Validate returns the problems that make the set unusable (errors) and the ones
-// worth a note (warnings).
-func (s *Set) Validate(strict bool) (errorsOut []string, warnings []string) {
-	err := func(code, message string) { errorsOut = append(errorsOut, code+": "+message) }
-	warn := func(code, message string) { warnings = append(warnings, code+": "+message) }
+// validation collects the problems found while checking one question set. Errors
+// make the set unusable; warnings are worth printing but do not stop an import.
+type validation struct {
+	errors   []string
+	warnings []string
+}
 
+func (v *validation) err(code, message string) {
+	v.errors = append(v.errors, code+": "+message)
+}
+
+func (v *validation) warn(code, message string) {
+	v.warnings = append(v.warnings, code+": "+message)
+}
+
+// Validate returns the problems that make the set unusable (errors) and the ones
+// worth a note (warnings). Each rule checks one part of the document, in the order
+// the operator reads it.
+func (s *Set) Validate(strict bool) (errorsOut []string, warnings []string) {
+	v := &validation{}
+	v.header(s)
+	knownIDs := v.questions(s)
+	v.stages(s, knownIDs)
+	v.nesting(s, strict)
+	v.brand(s)
+	return v.errors, v.warnings
+}
+
+// header checks the fields that name the measurement. A changed set_version,
+// site_id, own_domain or market makes an earlier measurement another measurement.
+func (v *validation) header(s *Set) {
 	if strings.TrimSpace(s.SetVersion) == "" {
-		err("E010", "set_version is empty (raise it whenever a question text changes)")
+		v.err("E010", "set_version is empty (raise it whenever a question text changes)")
 	}
 	if strings.TrimSpace(s.SiteID) == "" {
-		err("E011", "site_id is empty")
+		v.err("E011", "site_id is empty")
 	}
 	own := strings.TrimSpace(s.OwnDomain)
 	if own == "" {
-		err("E012", "own_domain is empty (needed to decide whether a citation is yours)")
+		v.err("E012", "own_domain is empty (needed to decide whether a citation is yours)")
 	} else if strings.ContainsAny(own, "/:") {
-		err("E012", fmt.Sprintf("own_domain must be a bare host name, got %q", own))
+		v.err("E012", fmt.Sprintf("own_domain must be a bare host name, got %q", own))
 	}
 	if strings.TrimSpace(s.Market) == "" {
-		err("E013", "market is empty (the same question in another market is another measurement)")
+		v.err("E013", "market is empty (the same question in another market is another measurement)")
 	}
+}
 
+// questions checks the ids, the texts and the categories, and returns the ids it
+// saw so the stage rules can resolve their references.
+func (v *validation) questions(s *Set) map[string]bool {
 	if len(s.Questions) == 0 {
-		err("E020", "questions is empty")
+		v.err("E020", "questions is empty")
 	}
 	seenIDs := map[string]bool{}
 	seenText := map[string]string{}
@@ -131,59 +160,79 @@ func (s *Set) Validate(strict bool) (errorsOut []string, warnings []string) {
 		where := fmt.Sprintf("questions[%d]", index)
 		key := strings.TrimSpace(question.Key)
 		if key == "" {
-			err("E025", where+" has no id")
+			v.err("E025", where+" has no id")
 		} else if seenIDs[key] {
-			err("E021", "duplicate id: "+key)
+			v.err("E021", "duplicate id: "+key)
 		}
 		seenIDs[key] = true
 
 		text := strings.TrimSpace(question.Text)
 		if text == "" {
-			err("E023", where+" ("+key+") has empty text")
+			v.err("E023", where+" ("+key+") has empty text")
 		} else {
 			normalized := domain.NormalizeText(text)
 			if other, ok := seenText[normalized]; ok {
-				err("E024", "two questions normalise to the same text: "+key+" and "+other)
+				v.err("E024", "two questions normalise to the same text: "+key+" and "+other)
 			} else {
 				seenText[normalized] = key
 			}
 		}
 		if !categorySet[strings.TrimSpace(question.Category)] {
-			err("E022", fmt.Sprintf("%s (%s) has an unknown category %q (allowed: %s)",
+			v.err("E022", fmt.Sprintf("%s (%s) has an unknown category %q (allowed: %s)",
 				where, key, question.Category, strings.Join(Categories, ", ")))
 		}
 	}
+	return seenIDs
+}
 
+// stages checks the stage names, the sizes and the references they make.
+func (v *validation) stages(s *Set, knownIDs map[string]bool) {
 	if len(s.Stages) == 0 {
-		err("E030", "stages is empty")
-	}
-	allowedStage := map[string]bool{}
-	for _, name := range StageNames {
-		allowedStage[name] = true
+		v.err("E030", "stages is empty")
 	}
 	for name, stage := range s.Stages {
-		if !allowedStage[name] {
-			err("E030", fmt.Sprintf("unknown stage %q (allowed: %s)", name, strings.Join(StageNames, ", ")))
-			continue
+		v.stage(name, stage, knownIDs)
+	}
+}
+
+// stage checks one stage: a known name, a size in range, and references to ids the
+// set declares exactly once.
+func (v *validation) stage(name string, stage Stage, knownIDs map[string]bool) {
+	if !knownStage(name) {
+		v.err("E030", fmt.Sprintf("unknown stage %q (allowed: %s)", name, strings.Join(StageNames, ", ")))
+		return
+	}
+	if len(stage.QuestionIDs) == 0 {
+		v.err("E032", "stage "+name+" has no question_ids")
+	}
+	if stage.RunsPerQuestion < 1 || stage.RunsPerQuestion > 5 {
+		v.err("E033", fmt.Sprintf("stage %s runs_per_question must be 1..5, got %d", name, stage.RunsPerQuestion))
+	}
+	seen := map[string]bool{}
+	for _, id := range stage.QuestionIDs {
+		if !knownIDs[id] {
+			v.err("E031", "stage "+name+" references unknown id "+id)
 		}
-		if len(stage.QuestionIDs) == 0 {
-			err("E032", "stage "+name+" has no question_ids")
+		if seen[id] {
+			v.err("E031", "stage "+name+" lists "+id+" twice")
 		}
-		if stage.RunsPerQuestion < 1 || stage.RunsPerQuestion > 5 {
-			err("E033", fmt.Sprintf("stage %s runs_per_question must be 1..5, got %d", name, stage.RunsPerQuestion))
-		}
-		seen := map[string]bool{}
-		for _, id := range stage.QuestionIDs {
-			if !seenIDs[id] {
-				err("E031", "stage "+name+" references unknown id "+id)
-			}
-			if seen[id] {
-				err("E031", "stage "+name+" lists "+id+" twice")
-			}
-			seen[id] = true
+		seen[id] = true
+	}
+}
+
+func knownStage(name string) bool {
+	for _, allowed := range StageNames {
+		if name == allowed {
+			return true
 		}
 	}
+	return false
+}
 
+// nesting checks that every question of a smaller stage is also in the next larger
+// one. Without it the stage sets stop meaning the same thing between runs, and the
+// coverage denominator is no longer comparable.
+func (v *validation) nesting(s *Set, strict bool) {
 	order := []string{}
 	for _, name := range StageNames {
 		if _, ok := s.Stages[name]; ok {
@@ -193,38 +242,48 @@ func (s *Set) Validate(strict bool) (errorsOut []string, warnings []string) {
 	for index := 0; index+1 < len(order); index++ {
 		outer := order[index]
 		inner := order[index+1]
-		outerIDs := s.Stages[outer].QuestionIDs
-		innerSet := map[string]bool{}
-		for _, id := range s.Stages[inner].QuestionIDs {
-			innerSet[id] = true
+		missing := missingFromInner(s.Stages[outer], s.Stages[inner])
+		if len(missing) == 0 {
+			continue
 		}
-		missing := []string{}
-		for _, id := range outerIDs {
-			if !innerSet[id] {
-				missing = append(missing, id)
-			}
-		}
-		if len(missing) > 0 {
-			message := fmt.Sprintf("stage %s questions are missing from %s: %s", outer, inner, strings.Join(missing, ", "))
-			if strict {
-				err("E040", message)
-			} else {
-				warn("W040", message)
-			}
+		message := fmt.Sprintf("stage %s questions are missing from %s: %s", outer, inner, strings.Join(missing, ", "))
+		if strict {
+			v.err("E040", message)
+		} else {
+			v.warn("W040", message)
 		}
 	}
+}
 
+// missingFromInner lists the outer stage's questions the inner stage does not
+// declare.
+func missingFromInner(outer, inner Stage) []string {
+	innerSet := map[string]bool{}
+	for _, id := range inner.QuestionIDs {
+		innerSet[id] = true
+	}
+	missing := []string{}
+	for _, id := range outer.QuestionIDs {
+		if !innerSet[id] {
+			missing = append(missing, id)
+		}
+	}
+	return missing
+}
+
+// brand checks the brand terms and the competitor list, which both change what a
+// report can say.
+func (v *validation) brand(s *Set) {
 	if len(s.BrandTerms) == 0 {
-		warn("W041", "brand_terms is empty: the brand mention rate cannot be measured")
+		v.warn("W041", "brand_terms is empty: the brand mention rate cannot be measured")
 	}
 	status := strings.TrimSpace(s.BrandTermsStatus)
 	if status != "" && status != BrandTermsStatusProposed && status != BrandTermsStatusConfirmed {
-		err("E043", fmt.Sprintf("brand_terms_status must be proposed or confirmed, got %q", status))
+		v.err("E043", fmt.Sprintf("brand_terms_status must be proposed or confirmed, got %q", status))
 	}
 	if len(s.Competitors) == 0 {
-		warnings = append(warnings, "I042: competitors is empty (the share table shows own / other only)")
+		v.warn("I042", "competitors is empty (the share table shows own / other only)")
 	}
-	return errorsOut, warnings
 }
 
 // StageRoundTrips is questions x runs for one stage (one provider).

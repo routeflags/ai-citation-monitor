@@ -104,6 +104,109 @@ func BucketLabel(startedAtUTC string, interval string) (string, error) {
 	}
 }
 
+// trendBucket is one time bucket of one series while Trends folds runs into it.
+type trendBucket struct {
+	total, valid, errored, unknown int
+	cited, branded                 int
+	judged                         int
+	identities                     []MeasurementIdentity
+}
+
+// add folds one run into the bucket. The status totals and the judged (citation
+// rate) denominator are separate counts: unknown observability is
+// status-independent, and a failed run is still not an "unknown answer".
+func (b *trendBucket) add(run sqlite.Run) {
+	b.total++
+	b.identities = append(b.identities, IdentityOf(run))
+	switch run.Status {
+	case "success":
+		b.valid++
+		if run.BrandMentioned {
+			b.branded++
+		}
+	case "error":
+		b.errored++
+	case "cancelled":
+		b.errored++
+	}
+	if run.CitationObservability != "observed" {
+		b.unknown++
+		return
+	}
+	if run.Status != "success" {
+		return
+	}
+	// judged counts the citation-rate denominator directly. It used to be
+	// `valid - unknown`, but unknown is status-independent (it includes failed
+	// runs, docs/metrics.md), so a bucket with one unknown success and one
+	// failure produced a negative denominator and printed "not measured".
+	b.judged++
+	if run.CitedOwn {
+		b.cited++
+	}
+}
+
+// trendPoint is one bucket's point. The first bucket has nothing to compare
+// against; a later one carries a delta unless the conditions or the denominators
+// make the comparison read as something it is not.
+func trendPoint(label string, entry *trendBucket, previous *TrendPoint, previousIdentities []MeasurementIdentity) TrendPoint {
+	point := TrendPoint{
+		Bucket:          label,
+		RunsTotal:       entry.total,
+		RunsValid:       entry.valid,
+		RunsError:       entry.errored,
+		RunsUnknown:     entry.unknown,
+		CitedOwn:        NewRate(entry.cited, entry.judged),
+		BrandMentioned:  NewRate(entry.branded, entry.valid),
+		Identities:      uniqueIdentities(entry.identities),
+		MixedConditions: MixedConditions(entry.identities),
+	}
+	if previous == nil {
+		point.Reason = "no_history"
+		point.CitedDeltaText = i18n.EN.HistoryShort()
+		point.BrandDeltaText = i18n.EN.HistoryShort()
+	} else {
+		applyDelta(&point, previous, previousIdentities, entry)
+	}
+	point.Note = point.NoteFor(i18n.EN)
+	return point
+}
+
+// applyDelta fills the delta against the previous bucket and the reason that
+// explains it. The order of the reasons is the order of the checks below: a
+// missing delta is reported before its conditions are considered.
+func applyDelta(point *TrendPoint, previous *TrendPoint, previousIdentities []MeasurementIdentity, entry *trendBucket) {
+	point.CitedDelta = Delta(previous.CitedOwn, point.CitedOwn)
+	point.CitedDeltaText = DeltaText(previous.CitedOwn, point.CitedOwn, i18n.EN)
+	point.BrandDelta = Delta(previous.BrandMentioned, point.BrandMentioned)
+	point.BrandDeltaText = DeltaText(previous.BrandMentioned, point.BrandMentioned, i18n.EN)
+	if point.CitedDelta == nil {
+		// Nothing to subtract: the delta is missing regardless of conditions.
+		point.Reason = "earlier_unmeasured"
+		return
+	}
+	if mismatch := conditionMismatch(previousIdentities, entry.identities); len(mismatch) > 0 {
+		// The rate is still printed (unlike compare, which can hide a whole row),
+		// but the change from the previous bucket is not a change in the site's
+		// visibility: a tool_version or question-set change is a different
+		// measurement (D27).
+		point.Reason = "conditions_differ"
+		point.Detail = strings.Join(mismatch, " / ")
+		point.CitedDelta = nil
+		point.CitedDeltaText = i18n.EN.Unmeasured()
+		point.BrandDelta = nil
+		point.BrandDeltaText = i18n.EN.Unmeasured()
+		return
+	}
+	if previous.CitedOwn.D != point.CitedOwn.D {
+		// The delta is still printed (unlike compare, which can hide a whole row),
+		// but it is read next to the note: the two buckets are not the same sample
+		// size.
+		point.Reason = "n_differs"
+		point.Detail = itoa(previous.CitedOwn.D) + " vs " + itoa(point.CitedOwn.D)
+	}
+}
+
 // Trends builds one series per group. The first bucket carries "履歴不足" because
 // there is nothing to compare it with. A bucket whose measurement conditions differ
 // from the previous one gets no delta (conditions_differ), because a change of
@@ -111,15 +214,9 @@ func BucketLabel(startedAtUTC string, interval string) (string, error) {
 // whose denominator differs keeps its delta but is marked n_differs, because a
 // difference of percentage points over a different n is not the same comparison.
 func Trends(runs []sqlite.Run, interval string) ([]TrendSeries, error) {
-	type bucket struct {
-		total, valid, errored, unknown int
-		cited, branded, success        int
-		judged                         int
-		identities                     []MeasurementIdentity
-	}
 	seriesIndex := map[string]int{}
 	series := []TrendSeries{}
-	buckets := []map[string]*bucket{}
+	buckets := []map[string]*trendBucket{}
 
 	for _, run := range runs {
 		label, err := BucketLabel(run.StartedAtUTC, interval)
@@ -134,41 +231,12 @@ func Trends(runs []sqlite.Run, interval string) ([]TrendSeries, error) {
 			series = append(series, TrendSeries{
 				Provider: run.Provider, Model: run.Model, Stage: run.Stage, Interval: interval,
 			})
-			buckets = append(buckets, map[string]*bucket{})
+			buckets = append(buckets, map[string]*trendBucket{})
 		}
 		if buckets[index][label] == nil {
-			buckets[index][label] = &bucket{}
+			buckets[index][label] = &trendBucket{}
 		}
-		entry := buckets[index][label]
-		entry.total++
-		entry.identities = append(entry.identities, IdentityOf(run))
-		switch run.Status {
-		case "success":
-			entry.valid++
-			entry.success++
-			if run.BrandMentioned {
-				entry.branded++
-			}
-		case "error":
-			entry.errored++
-		case "cancelled":
-			entry.errored++
-		}
-		if run.CitationObservability != "observed" {
-			entry.unknown++
-			continue
-		}
-		if run.Status != "success" {
-			continue
-		}
-		// judged counts the citation-rate denominator directly. It used to be
-		// `valid - unknown`, but unknown is status-independent (it includes failed
-		// runs, docs/metrics.md), so a bucket with one unknown success and one
-		// failure produced a negative denominator and printed "not measured".
-		entry.judged++
-		if run.CitedOwn {
-			entry.cited++
-		}
+		buckets[index][label].add(run)
 	}
 
 	for index := range series {
@@ -182,52 +250,7 @@ func Trends(runs []sqlite.Run, interval string) ([]TrendSeries, error) {
 		var previousIdentities []MeasurementIdentity
 		for _, label := range labels {
 			entry := buckets[index][label]
-			point := TrendPoint{
-				Bucket:          label,
-				RunsTotal:       entry.total,
-				RunsValid:       entry.valid,
-				RunsError:       entry.errored,
-				RunsUnknown:     entry.unknown,
-				CitedOwn:        NewRate(entry.cited, entry.judged),
-				BrandMentioned:  NewRate(entry.branded, entry.valid),
-				Identities:      uniqueIdentities(entry.identities),
-				MixedConditions: MixedConditions(entry.identities),
-			}
-			if previous == nil {
-				point.Reason = "no_history"
-				point.CitedDeltaText = i18n.EN.HistoryShort()
-				point.BrandDeltaText = i18n.EN.HistoryShort()
-			} else {
-				point.CitedDelta = Delta(previous.CitedOwn, point.CitedOwn)
-				point.CitedDeltaText = DeltaText(previous.CitedOwn, point.CitedOwn, i18n.EN)
-				point.BrandDelta = Delta(previous.BrandMentioned, point.BrandMentioned)
-				point.BrandDeltaText = DeltaText(previous.BrandMentioned, point.BrandMentioned, i18n.EN)
-				mismatch := conditionMismatch(previousIdentities, entry.identities)
-				switch {
-				case point.CitedDelta == nil:
-					// Nothing to subtract: the delta is missing regardless of conditions.
-					point.Reason = "earlier_unmeasured"
-				case len(mismatch) > 0:
-					// The rate is still printed (unlike compare, which can hide a whole
-					// row), but the change from the previous bucket is not a change in the
-					// site's visibility: a tool_version or question-set change is a
-					// different measurement (D27).
-					point.Reason = "conditions_differ"
-					point.Detail = strings.Join(mismatch, " / ")
-					point.CitedDelta = nil
-					point.CitedDeltaText = i18n.EN.Unmeasured()
-					point.BrandDelta = nil
-					point.BrandDeltaText = i18n.EN.Unmeasured()
-				case previous.CitedOwn.D != point.CitedOwn.D:
-					// The delta is still printed (unlike compare, which can hide a whole
-					// row), but it is read next to the note: the two buckets are not the
-					// same sample size.
-					point.Reason = "n_differs"
-					point.Detail = itoa(previous.CitedOwn.D) + " vs " + itoa(point.CitedOwn.D)
-				}
-			}
-			point.Note = point.NoteFor(i18n.EN)
-			points = append(points, point)
+			points = append(points, trendPoint(label, entry, previous, previousIdentities))
 			previous = &points[len(points)-1]
 			previousIdentities = entry.identities
 		}
