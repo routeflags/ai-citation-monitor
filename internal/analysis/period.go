@@ -204,6 +204,10 @@ func LoadPeriod(ctx context.Context, db *sqlite.DB, period Period, filter sqlite
 	return result, nil
 }
 
+// buildTotals counts the period. Status partitions the runs
+// (success + error + cancelled = runs_total); unknown is an observability
+// dimension, not a third status, so it overlaps with the status columns: a failed
+// call normally has no observed citation metadata. docs/metrics.md states both.
 func buildTotals(runs []sqlite.Run) Totals {
 	totals := Totals{RunsTotal: len(runs)}
 	for _, run := range runs {

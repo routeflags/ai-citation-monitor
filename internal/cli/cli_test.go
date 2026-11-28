@@ -671,6 +671,88 @@ func TestCompetitorsAddRejectsAPublicSuffix(t *testing.T) {
 	}
 }
 
+// The config and `competitors add` have to canonicalise the same way: a URL or an
+// IDN written in `aicm.toml` must be matched and listed as the host it names.
+func TestNormalizeDomainCanonicalisesInput(t *testing.T) {
+	for input, want := range map[string]string{
+		"https://www.rival.example/path": "www.rival.example",
+		" HTTP://Rival.Example. ":        "rival.example",
+		"例え.テスト":                         "xn--r8jz45g.xn--zckzah",
+		"rival.example":                  "rival.example",
+		"":                               "",
+	} {
+		if got := normalizeDomain(input); got != want {
+			t.Errorf("normalizeDomain(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+// A competitor written as a URL in the config is still the site it names; before
+// the shared canonicaliser it became a row that never matched a citation host.
+func TestConfigCompetitorWrittenAsAURLIsMatched(t *testing.T) {
+	h := newHarness(t)
+	h.importQuestions()
+	configText := readFileString(t, h.configPath)
+	configText = strings.Replace(configText,
+		`competitors = ["rival.example"]`,
+		`competitors = ["https://rival.example/path"]`, 1)
+	if err := os.WriteFile(h.configPath, []byte(configText), 0o644); err != nil {
+		t.Fatalf("rewrite config: %v", err)
+	}
+
+	if code, _, stderr := h.run("run", "--provider", "openai", "--repeat", "1", "--yes"); code != ExitOK {
+		t.Fatalf("run = %d: %s", code, stderr)
+	}
+	code, stdout, stderr := h.run("report", "--period", "2026-11-15", "--stdout")
+	if code != ExitOK {
+		t.Fatalf("report = %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "| rival.example | competitor | registered |") {
+		t.Errorf("the registered competitor must be the canonical host:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "\n| https://rival.example/path") {
+		t.Errorf("a URL must not become a table row:\n%s", stdout)
+	}
+	code, list, stderr := h.run("competitors", "list")
+	if code != ExitOK {
+		t.Fatalf("list = %d: %s", code, stderr)
+	}
+	if !strings.Contains(list, "rival.example") || strings.Contains(list, "https://") {
+		t.Errorf("the list must show the canonical host only:\n%s", list)
+	}
+}
+
+// A row recorded by an older build with a Unicode domain has to stay removable
+// after the canonicaliser started returning punycode.
+func TestCompetitorsRemoveFindsAStoredUnicodeRow(t *testing.T) {
+	h := newHarness(t)
+	insert := h.query(`INSERT INTO competitors (project_id, domain, label, source, created_at)
+		VALUES (1, '例え.テスト', '', 'registered', '2026-11-15T00:00:00Z')`)
+	insert.exec()
+	insert.close()
+
+	code, list, stderr := h.run("competitors", "list")
+	if code != ExitOK {
+		t.Fatalf("list = %d: %s", code, stderr)
+	}
+	if !strings.Contains(list, "xn--r8jz45g.xn--zckzah") {
+		t.Errorf("the list must show the canonical form of a stored row:\n%s", list)
+	}
+
+	code, stdout, stderr := h.run("competitors", "remove", "xn--r8jz45g.xn--zckzah")
+	if code != ExitOK {
+		t.Fatalf("remove = %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "removed:") {
+		t.Errorf("the Unicode row must be found: %s", stdout)
+	}
+	left := h.query(`SELECT COUNT(*) FROM competitors WHERE domain = '例え.テスト'`)
+	defer left.close()
+	if got := left.int64(); got != 0 {
+		t.Errorf("rows left = %d, want 0", got)
+	}
+}
+
 func TestQuestionsImportCheckWritesNeitherQuestionsNorTheQuestionSet(t *testing.T) {
 	h := newHarness(t)
 	path := writeQuestionSet(t, h, questionSetWithStatus("proposed"))

@@ -346,6 +346,9 @@ func Build(runs []sqlite.Run, citations []sqlite.CitationRow, opts Options) []Gr
 				group.RunsCancelled++
 			}
 			if run.CitationObservability != observabilityObserved {
+				// unknown is status-independent: a failed call has no observed metadata either,
+				// so one run can be counted here and in RunsError. Only a successful unknown
+				// answer is an "unknown question" for coverage (docs/metrics.md).
 				group.RunsUnknown++
 				if run.Status == sqliteStatusSuccess {
 					// A failed run is a failure, not an "unknown answer".
@@ -521,6 +524,12 @@ func buildDomains(citations []sqlite.CitationRow, judgedRuns []sqlite.Run, opts 
 	for _, competitor := range opts.Competitors {
 		key := domain.AggregationDomain(competitor, opts.OwnDomain, opts.Subdomains, opts.Competitors)
 		if key == "" {
+			continue
+		}
+		// A domain that is classified as ours is not a competitor row, even when the same
+		// name also appears in the competitor list (D23 §7). The classification column
+		// decides how the row is read, so `registered` must not contradict it.
+		if domain.ClassifyDomain(key, opts.OwnDomain, opts.Subdomains, nil) == "own" {
 			continue
 		}
 		registered[key] = true

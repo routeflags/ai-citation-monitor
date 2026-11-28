@@ -163,14 +163,14 @@ func TestBuildListsTheConfiguredConditions(t *testing.T) {
 	result := sampleResult(t)
 	cfg := &config.Config{SiteID: "demo", OwnDomain: "example.shop", Market: "ja-JP", BrandTerms: []string{"Example"}}
 	markdown := Build(result, Options{Config: cfg, Language: i18n.EN, GeneratedAt: "2026-11-15T00:00:00Z"})
-	for _, want := range []string{"Conditions", "responses/v1", "question set", "citation metadata not observed (unknown)", "does not say"} {
+	for _, want := range []string{"Conditions", "responses/v1", "question set", "citation metadata not observed (unknown)", "does not say", "counted per site"} {
 		if !strings.Contains(markdown, want) {
 			t.Errorf("report does not contain %q", want)
 		}
 	}
-	// Status and observability are separate dimensions, and the report says so.
-	if !strings.Contains(markdown, "appears in both `failure` and `unknown`") {
-		t.Error("the observed note must say a failed run is counted in both dimensions")
+	// The two domain tables use different units, and the report says so.
+	if !strings.Contains(markdown, "The share table below counts hosts") {
+		t.Error("the competitor note must say the share table counts hosts")
 	}
 }
 

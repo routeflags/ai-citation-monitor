@@ -181,10 +181,12 @@ registrable domain stays its own row instead of absorbing its siblings (D23).
 `analysis.MeasurementIdentity` is the set of conditions a rate has to share before it
 can be read as the same measurement: `api_endpoint_version`, `tool_version`,
 `question_set_version` and `question_set_sha256`. `compare` refuses a delta when two
-periods differ, and `Build` records the identity fields that differ inside one group as
-`mixed_conditions` instead of pretending the average is one measurement. The group key
-stays `provider x model x stage` (invariant 2), so the rates keep their denominator and
-the mix is visible rather than silently removed (D24). `trends` does not yet compare
+periods differ on three of them (`api_endpoint_version`, `question_set_sha256`,
+`tool_version`; an empty value counts as absent, not as a difference), and `Build`
+records every identity field that differs inside one group as `mixed_conditions`
+instead of pretending the average is one measurement. The group key stays
+`provider x model x stage` (invariant 2), so the rates keep their denominator and the
+mix is visible rather than silently removed (D24). `trends` does not yet compare
 conditions between buckets.
 
 ## Integrity

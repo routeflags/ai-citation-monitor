@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -98,7 +99,7 @@ func (a *App) competitorsListCommand() *cobra.Command {
 				combined[normalizeDomain(configured)] = "config"
 			}
 			for _, stored := range stored {
-				combined[domain.CanonicalHost(stored)] = "database"
+				combined[normalizeDomain(stored)] = "database"
 			}
 			if a.JSON {
 				return a.PrintJSON(map[string]any{"competitors": combined})
@@ -107,8 +108,13 @@ func (a *App) competitorsListCommand() *cobra.Command {
 				fmt.Fprintln(a.Out, "no competitor domains registered")
 				return nil
 			}
-			for competitor, origin := range combined {
-				fmt.Fprintf(a.Out, "%-40s %s\n", competitor, origin)
+			names := make([]string, 0, len(combined))
+			for competitor := range combined {
+				names = append(names, competitor)
+			}
+			sort.Strings(names)
+			for _, competitor := range names {
+				fmt.Fprintf(a.Out, "%-40s %s\n", competitor, combined[competitor])
 			}
 			return nil
 		},
@@ -136,9 +142,26 @@ func (a *App) competitorsRemoveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			removed, err := db.RemoveCompetitor(ctx, project.ID, competitor)
+			stored, err := db.Competitors(ctx, project.ID)
 			if err != nil {
-				return failf(ExitConfig, "db_write_failed", "%v", err)
+				return failf(ExitConfig, "db_unavailable", "%v", err)
+			}
+			// A row recorded before the canonicaliser existed may hold the Unicode form
+			// while the input is now punycode (or the other way round). Remove every
+			// stored spelling that canonicalises to the requested domain.
+			targets := map[string]bool{competitor: true}
+			for _, storedDomain := range stored {
+				if normalizeDomain(storedDomain) == competitor {
+					targets[storedDomain] = true
+				}
+			}
+			removed := false
+			for target := range targets {
+				one, err := db.RemoveCompetitor(ctx, project.ID, target)
+				if err != nil {
+					return failf(ExitConfig, "db_write_failed", "%v", err)
+				}
+				removed = removed || one
 			}
 			inConfig := false
 			for _, configured := range cfg.Competitors {

@@ -140,8 +140,9 @@ carry `n`; `n = 0` prints `— (not measured)`. Without `--stdout` the file is w
 to `report_dir` (default `reports/`).
 
 `--json` writes `{period, groups, totals, conditions}`. Each group carries its rates
-with `n` and `d`, its `competitor_rate` rows (counted per site: the registered domain
-or its registrable domain), its `domain_share` rows (counted per host), and
+with `n` and `d`, its `competitor_rate` rows (counted per site — the registered domain
+or its registrable domain; per host when `subdomains = false`), its `domain_share`
+rows (counted per host), and
 `mixed_conditions`: the measurement conditions that differ inside the group. An empty
 list means the group is one measurement. When it is not empty, the Markdown report
 prints the same fields under **Conditions** and says the rate is an average over them,

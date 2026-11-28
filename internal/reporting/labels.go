@@ -61,7 +61,7 @@ var enLabels = labels{
 	observedH:         "Observed",
 	observedNote: "Counts before aggregation. Failures and unknown runs are excluded from the " +
 		"denominators but still counted here. Status and citation observability are separate " +
-		"dimensions: a failed run has no observed citation metadata either, so it appears in " +
+		"dimensions: a failed call usually has no observed citation metadata either, so it appears in " +
 		"both `failure` and `unknown`.",
 	run: "runs", success: "success", failure: "failure", cancelled: "cancelled",
 	unknown: "unknown", unknownRuns: "citation metadata not observed (unknown)", count: "count",
@@ -84,13 +84,18 @@ var enLabels = labels{
 	coveredQs:        "questions with an own citation", unmeasuredQs: "questions not measured",
 	unknownOnlyQs: "questions with unknown answers only",
 	competitorH:   "GEO: citation rate per domain",
-	competitorNote: "The denominator is the valid runs of the same group. One answer can cite " +
-		"several domains, so the column does not add up to 100%.",
+	competitorNote: "The rate is counted per site: your registered competitor domain, or the site a " +
+		"citation host belongs to when subdomains are included (`subdomains = false` counts the " +
+		"exact host). The denominator is the valid runs of the same group, and one answer can " +
+		"cite several sites, so the column does not add up to 100%. The share table below counts " +
+		"hosts, so the two tables use different units.",
 	domain: "domain", classification: "class", registeredCol: "registered",
 	registered: "registered", notRegistered: "observed only", runRate: "citation rate",
 	shareH: "GEO: citation share",
 	shareNote: "The denominator is the total number of citations in the group (a URL without a " +
-		"host still counts as one). The scope of the denominator is printed per group.",
+		"host still counts as one). The scope of the denominator is printed per group. Rows are " +
+		"hosts, so this table can split one site across several rows where the citation rate " +
+		"above counts it once (`docs/metrics.md`).",
 	citationCount: "citations", share: "share", noCitation: "— (no citation)",
 	compareH: "Period comparison",
 	compareNote: "`%s` -> `%s`. Differences are in percentage points. Rows whose conditions " +
@@ -143,7 +148,7 @@ var jaLabels = labels{
 	brandTermsMissing: "ブランド語が未設定のため、ブランド言及率は `—（未測定）` になる。",
 	observedH:         "観測（OBSERVED）",
 	observedNote: "集計前の件数。失敗と unknown は分母から外すが、件数としてはここに出る。" +
-		"状態（status）と引用の観測（observability）は別の次元で、失敗した run も引用メタデータは" +
+		"状態（status）と引用の観測（observability）は別の次元で、失敗した run もふつう引用メタデータは" +
 		"観測されていないため、`failure` と `unknown` の両方に出る。",
 	run: "run", success: "成功", failure: "失敗", cancelled: "中断",
 	unknown: "unknown", unknownRuns: "引用メタデータ未観測（unknown）", count: "件数",
@@ -164,13 +169,16 @@ var jaLabels = labels{
 	coveredQs:        "自社引用があった質問", unmeasuredQs: "未計測の質問",
 	unknownOnlyQs: "unknown のみの質問",
 	competitorH:   "GEO: ドメイン別 引用獲得率",
-	competitorNote: "分母は同じグループの有効 run。1 つの回答が複数ドメインを引用するので、" +
-		"合計は 100% を超え得る。",
+	competitorNote: "率はサイト単位で数える（登録した競合ドメイン、またはサブドメインを含む設定なら" +
+		"引用元ホストが属するサイト。`subdomains = false` なら完全一致のホスト）。分母は同じグループの" +
+		"有効 run で、1 つの回答が複数サイトを引用するため合計は 100% を超え得る。下の引用シェア表は" +
+		"ホスト単位なので、2 つの表は単位が違う。",
 	domain: "ドメイン", classification: "区分", registeredCol: "登録",
 	registered: "登録済み", notRegistered: "観測のみ", runRate: "引用獲得率",
 	shareH: "GEO: 引用シェア",
 	shareNote: "分母はそのグループの引用総件数（ホストが取れない URL も 1 件として数える）。" +
-		"分母のスコープはグループ内で閉じている。",
+		"分母のスコープはグループ内で閉じている。行はホスト単位なので、上の獲得率が 1 行にまとめる" +
+		"サイトをここでは複数行に分けることがある（`docs/metrics.md`）。",
 	citationCount: "引用件数", share: "シェア", noCitation: "—（引用なし）",
 	compareH:    "期間比較",
 	compareNote: "`%s` → `%s`。差は percentage points。条件が違う行は差を出さない。",

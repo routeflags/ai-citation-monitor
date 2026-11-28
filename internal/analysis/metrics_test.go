@@ -258,6 +258,34 @@ func TestDeeperCompetitorRegistrationDoesNotOverMatch(t *testing.T) {
 	}
 }
 
+// A domain that is ours is not a competitor row even when the same name is also in
+// the competitor list: `registered` must not contradict `classification` (D23 §7).
+func TestOwnDomainRegisteredAsCompetitorStaysOwn(t *testing.T) {
+	runs := []sqlite.Run{
+		run(1, "openai", "m", "smoke", "Q01", false, "observed", "success", "2026-11-12T01:00:00Z"),
+	}
+	citations := []sqlite.CitationRow{
+		{RunID: 1, Position: 1, Hostname: host("www.rival.example")},
+	}
+	group := Build(runs, citations, Options{
+		OwnDomain: "rival.example", Subdomains: true, Competitors: []string{"rival.example"},
+	})[0]
+	rows := map[string]DomainRate{}
+	for _, row := range group.CompetitorRate {
+		rows[row.Domain] = row
+	}
+	row, ok := rows["rival.example"]
+	if !ok {
+		t.Fatalf("rows = %+v, want the own domain's row", group.CompetitorRate)
+	}
+	if row.Classification != "own" || row.Registered {
+		t.Errorf("row = %+v, want own and not registered", row)
+	}
+	if row.Runs != 1 {
+		t.Errorf("runs = %d, want the www. citation counted for the own site", row.Runs)
+	}
+}
+
 // The registered value is canonicalised before it becomes a key: case, whitespace
 // and a trailing dot used to split the row from the host it names.
 func TestCompetitorRegistrationIsCanonicalised(t *testing.T) {
