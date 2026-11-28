@@ -97,6 +97,9 @@ When a period mixes sets with different statuses, every status is listed
   `28.8%`, `1/2000` prints `0.0%` — the same tenth on every machine and Go version
   (`proofs/Rate.lean`, `tenths_spec`). A column of shares is therefore not required to
   add up to exactly `100.0%`; it stays within half a tenth per row (`share_column_bound`).
+  `go test ./...` checks every numerator for every denominator up to 3000 against a
+  second integer implementation, with exact rational arithmetic pinning every halfway
+  value (`docs/decisions/20261128-rounding-exhaustive-test.md`, D25).
 - **A difference between periods is in percentage points, and it is the difference
   between the two rates the table prints**: `1/5 -> 6/32` prints `20.0% -> 18.8%`, so the
   delta is `-1.2pt`. Subtracting the rows gives the delta column.

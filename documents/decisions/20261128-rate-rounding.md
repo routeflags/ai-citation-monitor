@@ -42,7 +42,9 @@
 
 ## 未検証 / 既知の限界
 
-- 全 `d ≤ 3000` の一致は一回の走査で確かめた（恒久テストは `d ≤ 300` の全数とベクタ）。
+- 全 `d ≤ 3000`, `n ≤ d` の一致は D25（`documents/decisions/20261128-rounding-exhaustive-test.md`）
+  で常設の全数照合になった。独立した整数オラクルで 4,504,500 通りを `go test ./...` で回し、
+  `big.Rat` は `d ≤ 300` の全数と `d ≤ 3000` の全 tie 4,600 通りを錨として残す。
 - JSON の `delta` は tenth 単位に量子化される（以前は float の全精度）。細かい桁を期待する
   consumer には影響がある。
 - tie の向き（偶数側）を変えるときは、コード・`docs/metrics.md`・`proofs/Rate.lean`・
