@@ -85,6 +85,75 @@ func TestTenthsMatchesExactRounding(t *testing.T) {
 	}
 }
 
+// The permanent exhaustive range is every n <= d for d <= 3000: 4,504,500 pairs (D25).
+//
+// big.Rat over the same range costs about 0.8s on a laptop, which buys nothing that
+// this second integer route does not: midpointTenths divides once, then compares the
+// exact ratio with the halfway point between the two candidate tenths, so it never
+// repeats Tenths' remainder test. The whole range takes about 0.01s, which is why it
+// runs in `go test ./...` and not in a separate nightly job.
+func TestTenthsMatchesMidpointOracleOverFullRange(t *testing.T) {
+	for d := 1; d <= 3000; d++ {
+		for n := 0; n <= d; n++ {
+			if got, want := Tenths(n, d), midpointTenths(n, d); got != want {
+				t.Fatalf("Tenths(%d, %d) = %d, want %d (independent integer oracle)", n, d, got, want)
+			}
+		}
+	}
+}
+
+// The oracle has to state the same rule, not merely the same shape: every exact
+// halfway value up to 3000 (4,600 of them, the inputs where the old float64 version
+// printed the other tenth for 553) is compared with the exact rational arithmetic.
+// Together with TestTenthsMatchesExactRounding (d <= 300) this pins the fast oracle to
+// the rule that proofs/Rate.lean proves.
+func TestMidpointOracleMatchesExactRounding(t *testing.T) {
+	checked := 0
+	for d := 1; d <= 3000; d++ {
+		for n := 0; n <= d; n++ {
+			if !isExactHalfway(n, d) {
+				continue
+			}
+			checked++
+			if got, want := midpointTenths(n, d), exactTenths(n, d); got != want {
+				t.Fatalf("midpointTenths(%d, %d) = %d, want %d (exact rational)", n, d, got, want)
+			}
+		}
+	}
+	if checked != 4600 {
+		t.Fatalf("checked %d halfway values, want 4600: the scan is not looking at d <= 3000", checked)
+	}
+}
+
+// isExactHalfway reports whether 1000*n/d sits exactly halfway between two tenths,
+// which is where the tie-break decides the printed digit.
+func isExactHalfway(n, d int) bool {
+	twice := 2000 * n
+	return twice%d == 0 && (twice/d)%2 == 1
+}
+
+// midpointTenths is an independent oracle for Tenths: the lower tenth by division,
+// then one exact comparison with the midpoint between it and the next tenth.
+//
+// It exists only to check Tenths: Tenths computes the remainder and compares 2*r with
+// d, while this compares 2000*n with (2*lower+1)*d. A mistake in either comparison
+// (or in the tie-break) makes the two disagree, so the exhaustive test is not the
+// implementation checked against itself.
+func midpointTenths(n, d int) int {
+	n64, d64 := int64(n), int64(d)
+	lower := 1000 * n64 / d64
+	switch below, halfway := 2000*n64, (2*lower+1)*d64; {
+	case below < halfway:
+		return int(lower)
+	case below > halfway:
+		return int(lower + 1)
+	case lower%2 == 0:
+		return int(lower)
+	default:
+		return int(lower + 1)
+	}
+}
+
 // `1000 * n` was computed in int, which overflows above 2,147,484 on a 32-bit
 // build and would print a negative percentage. No 32-bit binary is released
 // (.goreleaser.yaml ships amd64/arm64), so this is hygiene rather than a shipped
