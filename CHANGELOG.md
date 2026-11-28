@@ -17,6 +17,26 @@ All notable changes to this project are documented here. The format follows
 - Colour is used only when stdout is a terminal. `--json` and stderr are never
   styled, and `--no-color`, `NO_COLOR` and `TERM=dumb` turn it off. `--no-color`
   is the new global flag for the same opt-out.
+- **Measurement conditions per trend bucket.** `aicm trends --json` points now carry
+  `identities` (the measurement identities recorded in the bucket, distinct) and
+  `mixed_conditions` (the identity fields that differ inside one bucket), so a
+  consumer can tell a bucket that averaged two tool versions from one measurement.
+- `aicm competitors list --json` adds `invalid`: the registered values that are public
+  suffixes and would over-match. The existing `competitors` object is unchanged.
+
+### Changed
+
+- **A public suffix in `competitors` is a configuration error (exit 2).** It was
+  already refused by `competitors add`, but a value written in `aicm.toml` or passed to
+  `aicm init --competitors` was accepted and then counted every site under the suffix
+  as one competitor. Existing rows in the `competitors` table are not deleted;
+  `competitors list` marks them, and read-only commands keep working so existing data
+  stays readable.
+- **`aicm trends` prints no delta across different measurement conditions.** When
+  `api_endpoint_version`, `question_set_sha256` or `tool_version` changes between
+  adjacent buckets, the bucket keeps its rate and `n` but the delta is the unmeasured
+  mark with `reason = conditions_differ` — the rule `compare` already applied between
+  periods. `n_differs` is unchanged and is reported when the conditions agree.
 
 ## [0.2.0] - 2026-11-28
 

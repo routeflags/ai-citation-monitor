@@ -36,7 +36,8 @@
    語彙は 2 か所でずれない。
 7. **`trends` の分母の不具合も直す**。`NewRate(entry.cited, entry.valid-entry.unknown)` は
    status 非依存の `unknown` を成功数から引くため、成功 1 件（unknown）+ 失敗 1 件で分母が負になる。
-   success ∧ observed を専用カウンタで数えて渡す（バケット間の条件比較は別 issue）。
+   success ∧ observed を専用カウンタで数えて渡す。バケット間の条件比較は D27
+   （`documents/decisions/20261128-trends-conditions.md`）で同じ 3 項目を使って行う。
 
 ## 理由
 

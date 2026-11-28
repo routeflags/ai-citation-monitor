@@ -15,7 +15,13 @@
      該当が無ければ **registrable domain（eTLD+1）**。`publicsuffix.EffectiveTLDPlusOne` が
      失敗するホスト（`localhost`、IP アドレス、`github.io` のような public suffix 自体）は
      ホスト自身をキーにする（引用を捨てない）。
-2. **設定値の正規化**。正規化の場所は **CLI 境界**（`analysisOptions` と `competitors add`）とし、`domain.CanonicalHost`（小文字・末尾ドット除去・punycode）を使う。従来は `strings.ToLower(TrimSpace())` だけで、`Example.COM.` や IDN の登録が正規化済みホストと一致しなかった。`AggregationDomain` も防御的に正規化する（DB に古い値が残っていても集計が割れない）。
+2. **設定値の正規化**。正規化の関数は `domain.CanonicalConfiguredDomain`（小文字・scheme/path
+   除去・末尾ドット除去・punycode）に 1 つ置き、**計測の境界**（`analysisOptions`、
+   `competitors add` / `remove` / `list`、`run` の runner 設定、`config.Problems()`）が
+   同じ関数を呼ぶ（D26 で CLI の非公開関数から移動した）。従来は
+   `strings.ToLower(TrimSpace())` だけで、`Example.COM.` や IDN、URL 形式の登録が
+   正規化済みホストと一致しなかった。`AggregationDomain` も防御的に正規化する
+   （DB に古い値が残っていても集計が割れない）。
 3. **分子は run の数**。そのキーに属するホストを 1 つ以上引用した judgeable run を数える。
    同じ run が同じキーの複数ホストを引用しても 1。
 4. **分母はグループの judgeable run**（D8 のまま）。`subdomains = false` でも true でも同じ。

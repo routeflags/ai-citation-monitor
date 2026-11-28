@@ -163,11 +163,12 @@ into every run as part of `tool_version`).
   one site, and the citation rate would be meaningless. The check uses
   `golang.org/x/net/publicsuffix`, including the private section (hosting suffixes).
 - **A public suffix is not a competitor either.** `competitors add`, `aicm init
-  --competitors` and the config loader refuse one (exit 2), because a competitor row
-  stands for a whole site (D23): `co.jp` would count every customer under it as that
-  competitor. Rows already in the `competitors` table are not deleted — it is a
-  management table — and `aicm competitors list` marks them. A report applies them
-  until the config or the row is fixed, which is the remaining limit (D26).
+  --competitors` and the configuration validator (`config.Problems()`, which `run` and
+  `init` call) refuse one (exit 2), because a competitor row stands for a whole site
+  (D23): `co.jp` would count every customer under it as that competitor. Rows already
+  in the `competitors` table are not deleted — it is a management table — and `aicm
+  competitors list` marks them. Read-only commands keep working, so a report applies
+  such a row until the config or the row is fixed; that is the remaining limit (D26).
 
 ## What a competitor row stands for
 
@@ -183,8 +184,9 @@ registrable domain stays its own row instead of absorbing its siblings (D23).
 A configured competitor is reduced to that same form once, by
 `domain.CanonicalConfiguredDomain` (lower case, no scheme or path, no trailing dot,
 IDN in punycode), and a public suffix is refused before a measurement runs, so the
-value in `aicm.toml`, the value `competitors add` stores and the value the report
-matches cannot be three different domains (D26).
+value in `aicm.toml`, the value `competitors add` stores, the `source_type` the runner
+records on a citation and the value the report matches cannot be four different
+domains (D26).
 
 ## Measurement identity
 
@@ -196,8 +198,10 @@ periods differ on three of them (`api_endpoint_version`, `question_set_sha256`,
 records every identity field that differs inside one group as `mixed_conditions`
 instead of pretending the average is one measurement. The group key stays
 `provider x model x stage` (invariant 2), so the rates keep their denominator and the
-mix is visible rather than silently removed (D24). `trends` does not yet compare
-conditions between buckets.
+mix is visible rather than silently removed (D24). `trends` compares the identity set
+of each bucket with the previous bucket's on the same three fields and withholds the
+delta when they differ (`conditions_differ`); each bucket also carries its `identities`
+and `mixed_conditions` in `trends --json` (D27).
 
 ## Integrity
 

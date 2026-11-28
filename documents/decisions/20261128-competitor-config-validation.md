@@ -17,14 +17,18 @@
    計測規則で、D23 以降の競合行はサイト単位（suffix 配下の全顧客を吸い上げる）。
    片方だけ exit 2、片方だけ警告、という差は読者に説明できない。
 3. **正規化を 1 か所にする**。`internal/domain` に `CanonicalConfiguredDomain` を置き、
-   CLI（`competitors add` / `remove` / `list` / `analysisOptions`）と `config.Problems()` が
-   同じ関数を使う。`https://CO.JP/path` や末尾ドット付きの値も、保存・照合・検証で
-   同じドメインとして扱われる。
+   CLI（`competitors add` / `remove` / `list` / `analysisOptions`）、`run` の runner 設定、
+   `config.Problems()` が同じ関数を使う。`https://CO.JP/path` や末尾ドット付きの値も、
+   保存・照合・検証・**記録時の `source_type` 分類**で同じドメインとして扱われる。
+   runner は run の記録時に分類するので、ここを通さないと URL 形式の競合が
+   記録では `other`、レポートでは `competitor` になる。
 4. **既存の DB 行は削除しない**。`competitors` 表は管理用の記録であり、計測の入力では
    ない（レポート時に適用される）。`competitors list` は設定と DB の両方を従来どおり
-   出し、public suffix の行に `public suffix: every site under it would count as this
-   competitor` を付ける。`--json` は既存の `competitors` オブジェクトを変えず、
-   `invalid` 配列を additive に追加する。
+   出し、public suffix の行に
+   `public suffix: every site under it would count as this competitor` を付ける。
+   `--json` は `{"competitors": {domain: source}, "invalid": [domain, ...]}` を返す。
+   `invalid` は該当が無ければ `[]` で、キーは常に存在する（追加のみ。既存の
+   `competitors` オブジェクトの形は変えない）。
 5. **読み取りコマンドは止めない**。`Problems()` を呼ぶのは `run` と `init` だけで、
    `report` / `trends` / `compare` / `export` / `verify` / `competitors *` は今までどおり
    動く。既存の測定を読めなくするより、新しい計測を始めない方が害が小さい。
@@ -77,3 +81,8 @@
   `--force` だけを渡すと exit 2 になり、`--competitors` で置き換える必要がある。
 - public suffix 一覧は `golang.org/x/net/publicsuffix` に依存する。リストが更新されると
   新たに拒否される値が出るが、既存行は消さない。
+- 検証するのは「public suffix かどうか」だけ。`example.com:8080` や空白を含む値など、
+  ホスト名でない値は従来どおり受け付けられ、citation のホストと一致しない
+  （`own_domain` は `/:` を拒否するが、competitors の一般のホスト検証は別の決定）。
+- `run` は DB の既存行が public suffix でも止めない（検証は設定だけ）。それは
+  `competitors list` が印を付ける。

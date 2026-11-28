@@ -79,7 +79,9 @@ is a configuration error (exit 2), not a silent English report.
 
 `--competitors` accepts the same values `competitors add` does: the value is
 canonicalised, and a public suffix is a configuration error (exit 2). Nothing is
-written when the configuration is invalid.
+written when the configuration is invalid, and `--force` refuses while an invalid
+value inherited from the existing file is still there: pass `--competitors` with the
+replacement (or edit the file) to repair it. No database row is touched.
 
 ## questions
 
@@ -206,6 +208,14 @@ same percentage points over a different sample size are not the same comparison.
 bucket with no measurement (`n = 0`) prints no delta at all. The delta has the same
 unit and precision as `compare`: tenths of a point, the difference between the two
 rates the table prints.
+
+When a bucket's measurement conditions differ from the previous bucket's
+(`api_endpoint_version`, `question_set_sha256` or `tool_version`), the delta is not
+printed: the row says `conditions differ, so no delta (…)`, the same rule and wording
+as `compare`. The rate and its `n` stay, because they describe that bucket. `--json`
+carries `identities` (the distinct measurement identities recorded in the bucket) and
+`mixed_conditions` (the identity fields that differ inside one bucket) on every point;
+both are additions and the existing fields keep their meaning.
 
 ## competitors
 

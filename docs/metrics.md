@@ -47,10 +47,10 @@ Details that matter:
   statement about the unit of comparison. A host the public suffix list cannot
   resolve (`localhost`, an IP address, `github.io` on its own) keeps its own row.
   A public suffix cannot be registered as a competitor: `aicm competitors add`, `aicm
-  init --competitors` and the config loader refuse it (exit 2), since every customer
-  under it would become one competitor (D23, D26). Rows already in the database are
-  not deleted; `aicm competitors list` marks them, and a report keeps applying them
-  until the config or the row is fixed.
+  init --competitors` and the configuration validator refuse it (exit 2), since every
+  customer under it would become one competitor (D23, D26). Rows already in the
+  database are not deleted; `aicm competitors list` marks them, and a report keeps
+  applying them until the config or the row is fixed.
 - **Competitor citation rate does not add up to 100%.** One answer can cite
   several domains, so it is a per-domain rate, not a partition.
 - **Citation share counts hosts, not sites.** `example.com` and `www.example.com` are
@@ -163,21 +163,34 @@ two sides are not the same measurement:
 
 `--comparable-only` hides the rows that cannot be compared.
 
-Both `compare` and `trends` use the same three reason codes and the same wording:
-`unmeasured` / `earlier_unmeasured`, `conditions_differ` (compare only), `n_differs`
-and `no_history` (trends only).
+Both `compare` and `trends` use the same reason codes and the same wording:
+`unmeasured` / `earlier_unmeasured` (one side has no measurement), `conditions_differ`,
+`n_differs` and `no_history` (trends only). `trends` applies `conditions_differ` between
+adjacent buckets, on the same three fields `compare` uses.
 
 ## Trends
 
 - `daily`, `weekly` (ISO week), `monthly`; buckets are **JST** because the calendar
   the reader uses is JST.
 - The first bucket has nothing before it, so its delta is `— (no history)`.
-- When the previous bucket has no measurement, the delta is `— (not measured)` and
-  the note says why.
+- When either side has no measurement (the previous bucket, or a bucket whose runs are
+  not judgeable), the delta is `— (not measured)` and the note says why. The reason code
+  is `earlier_unmeasured`, the existing name for a missing delta.
+- Each bucket carries the measurement identities recorded in it (`identities` in
+  `trends --json`) and, when they are not all equal, `mixed_conditions` in the same
+  vocabulary as the report: a bucket can contain a `tool_version` change just as a group
+  can. The rate and `n` are still shown; the mix is visible.
+- When the previous bucket was not the same measurement (`api_endpoint_version`,
+  `question_set_sha256` or `tool_version` differs; an empty value counts as absent),
+  the delta is not computed: `reason = conditions_differ`, `detail` names the values,
+  and the delta text is the unmeasured mark. This is the rule `compare` applies between
+  periods. The rate and `n` of the bucket are still printed — they describe that bucket —
+  but the change from the previous bucket is not a change in the site's visibility.
 - When the previous bucket has a different denominator, the delta is printed with
   `reason = n_differs` and `detail = "<prev> vs <now>"`, using the same vocabulary
   and wording as `compare`. The two buckets are not the same sample size, so the
-  difference in percentage points is read next to that note.
+  difference in percentage points is read next to that note. `n_differs` is only used
+  when the conditions agree: a different measurement is the more important reason.
 
 ## What the tool deliberately cannot tell you
 
