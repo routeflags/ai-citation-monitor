@@ -93,12 +93,19 @@ func TestTenthsMatchesExactRounding(t *testing.T) {
 // repeats Tenths' remainder test. The whole range takes about 0.01s, which is why it
 // runs in `go test ./...` and not in a separate nightly job.
 func TestTenthsMatchesMidpointOracleOverFullRange(t *testing.T) {
+	checked := 0
 	for d := 1; d <= 3000; d++ {
 		for n := 0; n <= d; n++ {
+			checked++
 			if got, want := Tenths(n, d), midpointTenths(n, d); got != want {
 				t.Fatalf("Tenths(%d, %d) = %d, want %d (independent integer oracle)", n, d, got, want)
 			}
 		}
+	}
+	// A narrowed range must fail rather than pass on fewer pairs: d <= 300 is
+	// exactly what the permanent check used to be.
+	if checked != 4_504_500 {
+		t.Fatalf("checked %d pairs, want 4504500 for d <= 3000", checked)
 	}
 }
 
@@ -128,8 +135,9 @@ func TestMidpointOracleMatchesExactRounding(t *testing.T) {
 // isExactHalfway reports whether 1000*n/d sits exactly halfway between two tenths,
 // which is where the tie-break decides the printed digit.
 func isExactHalfway(n, d int) bool {
-	twice := 2000 * n
-	return twice%d == 0 && (twice/d)%2 == 1
+	n64, d64 := int64(n), int64(d)
+	twice := 2000 * n64
+	return twice%d64 == 0 && (twice/d64)%2 == 1
 }
 
 // midpointTenths is an independent oracle for Tenths: the lower tenth by division,
@@ -378,7 +386,7 @@ func TestCompetitorRegistrationIsCanonicalised(t *testing.T) {
 
 // exactTenths rounds 1000*n/d with big.Rat: the same rule, computed a different way.
 func exactTenths(n, d int) int {
-	r := new(big.Rat).SetFrac64(int64(1000*n), int64(d))
+	r := new(big.Rat).SetFrac64(1000*int64(n), int64(d))
 	q := new(big.Int)
 	rem := new(big.Int)
 	q.QuoRem(r.Num(), r.Denom(), rem)
@@ -602,10 +610,198 @@ func TestTrendsNotesADifferentDenominator(t *testing.T) {
 	if points[2].CitedDelta != nil || points[2].Detail != "" {
 		t.Errorf("an unmeasured bucket must not produce a delta or an n note: %+v", points[2])
 	}
+	// The reason code keeps its existing name, but the sentence does not claim the
+	// earlier bucket was the unmeasured one: here it is this bucket.
+	if points[2].Note != "one side has no measurement" {
+		t.Errorf("note = %q, want the side-neutral wording", points[2].Note)
+	}
 
 	ja := TrendPoint{Reason: "n_differs", Detail: "2 vs 1"}.NoteFor(i18n.JA)
 	if ja != "n が違う（2 vs 1）" {
 		t.Errorf("ja note = %q, want the compare wording", ja)
+	}
+	// The wording comes from compare's helper, in both languages: the same reason
+	// must not read differently in `aicm compare` and `aicm trends` (D27).
+	for _, lang := range []i18n.Lang{i18n.EN, i18n.JA} {
+		row := CompareRow{Reason: "n_differs", Detail: "2 vs 1"}.NoteFor(lang)
+		point := TrendPoint{Reason: "n_differs", Detail: "2 vs 1"}.NoteFor(lang)
+		if row != point {
+			t.Errorf("%s: compare note %q != trends note %q", lang, row, point)
+		}
+	}
+}
+
+// A bucket that changed tool_version is not the same measurement as the bucket before
+// it: the rate is still printed for that bucket (it describes that bucket's runs), but
+// the change from the previous bucket is not a change in the site's visibility (D27).
+// The wording is compare's, because it is the same rule.
+func TestTrendsSuppressesTheDeltaAcrossConditions(t *testing.T) {
+	first := run(1, "openai", "m", "smoke", "Q01", true, "observed", "success", "2026-11-01T01:00:00Z")
+	second := run(2, "openai", "m", "smoke", "Q01", false, "observed", "success", "2026-11-08T01:00:00Z")
+	second.ToolVersion = "0.2.0+norm3"
+
+	series, err := Trends([]sqlite.Run{first, second}, "weekly")
+	if err != nil {
+		t.Fatalf("Trends: %v", err)
+	}
+	point := series[0].Points[1]
+	if point.Reason != "conditions_differ" {
+		t.Fatalf("reason = %q, want conditions_differ: %+v", point.Reason, point)
+	}
+	if point.Detail != "tool_version: 0.1.0+norm1 -> 0.2.0+norm3" {
+		t.Errorf("detail = %q", point.Detail)
+	}
+	if point.CitedDelta != nil || point.BrandDelta != nil {
+		t.Errorf("a delta across conditions must not be computed: %+v", point)
+	}
+	if point.CitedDeltaText != "— (not measured)" || point.BrandDeltaText != "— (not measured)" {
+		t.Errorf("delta texts = %q / %q, want the unmeasured mark", point.CitedDeltaText, point.BrandDeltaText)
+	}
+	if point.CitedOwn.Text != "0.0%" || point.CitedOwn.D != 1 {
+		t.Errorf("the bucket's own rate must still be printed: %+v", point.CitedOwn)
+	}
+	compareNote := CompareRow{Reason: "conditions_differ", Detail: point.Detail}.NoteFor(i18n.EN)
+	if got := point.NoteFor(i18n.EN); got != compareNote {
+		t.Errorf("trends note %q must be compare's note %q", got, compareNote)
+	}
+	if got := point.NoteFor(i18n.JA); got != "条件が違うため差を出さない（tool_version: 0.1.0+norm1 -> 0.2.0+norm3）" {
+		t.Errorf("ja note = %q", got)
+	}
+}
+
+// Only the fields compare looks at are compared between buckets: a different
+// question_set_version label alone is not a mismatch (the set hash identifies the
+// questions), and an empty recorded value is absent on both sides, not a change.
+func TestTrendsConditionsUseTheCompareFields(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		mutate func(*sqlite.Run)
+		differ bool
+	}{
+		{"api_endpoint_version", func(r *sqlite.Run) { r.APIEndpointVersion = "responses/v2" }, true},
+		{"question_set_sha256", func(r *sqlite.Run) { r.QuestionSetSHA256 = "set-b" }, true},
+		{"tool_version", func(r *sqlite.Run) { r.ToolVersion = "0.2.0+norm3" }, true},
+		{"question_set_version", func(r *sqlite.Run) { r.QuestionSetVersion = "2" }, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			first := run(1, "openai", "m", "smoke", "Q01", true, "observed", "success", "2026-11-01T01:00:00Z")
+			second := run(2, "openai", "m", "smoke", "Q01", false, "observed", "success", "2026-11-08T01:00:00Z")
+			c.mutate(&second)
+			series, err := Trends([]sqlite.Run{first, second}, "weekly")
+			if err != nil {
+				t.Fatalf("Trends: %v", err)
+			}
+			point := series[0].Points[1]
+			if got := point.Reason == "conditions_differ"; got != c.differ {
+				t.Errorf("conditions differ = %t, want %t: %+v", got, c.differ, point)
+			}
+			if !c.differ && point.CitedDelta == nil {
+				t.Errorf("a delta must be printed when the conditions agree: %+v", point)
+			}
+		})
+	}
+}
+
+// Empty identities on both sides are "absent", exactly as compare treats them: two
+// records that name no condition can still be the same measurement.
+func TestTrendsTreatsEmptyConditionsAsAbsent(t *testing.T) {
+	blank := func(r *sqlite.Run) {
+		r.APIEndpointVersion, r.ToolVersion, r.QuestionSetVersion, r.QuestionSetSHA256 = "", "", "", ""
+	}
+	first := run(1, "openai", "m", "smoke", "Q01", true, "observed", "success", "2026-11-01T01:00:00Z")
+	second := run(2, "openai", "m", "smoke", "Q01", false, "observed", "success", "2026-11-08T01:00:00Z")
+	blank(&first)
+	blank(&second)
+	series, err := Trends([]sqlite.Run{first, second}, "weekly")
+	if err != nil {
+		t.Fatalf("Trends: %v", err)
+	}
+	point := series[0].Points[1]
+	if point.Reason == "conditions_differ" || point.CitedDelta == nil {
+		t.Errorf("an absent value on both sides is not a difference: %+v", point)
+	}
+}
+
+// A bucket can hold records of two measurement conditions (a tool_version change
+// inside one week). The rate is still an observation of that bucket, but the bucket
+// says that it is not one measurement (D24 vocabulary), in the note too.
+func TestTrendsReportsMixedConditionsInABucket(t *testing.T) {
+	// 2026-11-02 is a Monday, so both runs are in one ISO week.
+	first := run(1, "openai", "m", "smoke", "Q01", true, "observed", "success", "2026-11-02T01:00:00Z")
+	second := run(2, "openai", "m", "smoke", "Q02", false, "observed", "success", "2026-11-03T01:00:00Z")
+	second.ToolVersion = "0.2.0+norm3"
+
+	series, err := Trends([]sqlite.Run{first, second}, "weekly")
+	if err != nil {
+		t.Fatalf("Trends: %v", err)
+	}
+	point := series[0].Points[0]
+	if want := []string{"tool_version: 0.1.0+norm1, 0.2.0+norm3"}; !reflect.DeepEqual(point.MixedConditions, want) {
+		t.Errorf("mixed_conditions = %v, want %v", point.MixedConditions, want)
+	}
+	if len(point.Identities) != 2 {
+		t.Errorf("identities = %v, want the two recorded identities", point.Identities)
+	}
+	if point.CitedOwn.D != 2 || point.CitedOwn.Text != "50.0%" {
+		t.Errorf("the rate is still computed over the bucket: %+v", point.CitedOwn)
+	}
+	// The note is the reason (here: no history) followed by the mix, in the report's
+	// language, so a reader of either language sees both facts.
+	if got, want := point.NoteFor(i18n.EN), "no earlier bucket to compare with; mixes measurement conditions (tool_version: 0.1.0+norm1, 0.2.0+norm3)"; got != want {
+		t.Errorf("en note = %q, want %q", got, want)
+	}
+	if got, want := point.NoteFor(i18n.JA), "履歴不足；計測条件が混在（tool_version: 0.1.0+norm1, 0.2.0+norm3）"; got != want {
+		t.Errorf("ja note = %q, want %q", got, want)
+	}
+}
+
+// Two adjacent buckets that mix the same identities are still one comparable pair:
+// the set of conditions is the same on both sides, so the delta is printed and both
+// buckets carry mixed_conditions (the rule compare uses for a group).
+func TestTrendsComparesBucketsThatMixTheSameConditions(t *testing.T) {
+	week1 := run(1, "openai", "m", "smoke", "Q01", true, "observed", "success", "2026-11-02T01:00:00Z")
+	week1Other := run(2, "openai", "m", "smoke", "Q02", false, "observed", "success", "2026-11-02T01:00:00Z")
+	week1Other.ToolVersion = "0.2.0+norm3"
+	week2 := run(3, "openai", "m", "smoke", "Q01", true, "observed", "success", "2026-11-09T01:00:00Z")
+	week2Other := run(4, "openai", "m", "smoke", "Q02", true, "observed", "success", "2026-11-09T01:00:00Z")
+	week2Other.ToolVersion = "0.2.0+norm3"
+
+	series, err := Trends([]sqlite.Run{week1, week1Other, week2, week2Other}, "weekly")
+	if err != nil {
+		t.Fatalf("Trends: %v", err)
+	}
+	first, second := series[0].Points[0], series[0].Points[1]
+	if len(first.MixedConditions) != 1 || len(second.MixedConditions) != 1 {
+		t.Fatalf("both buckets mix the same conditions: %+v / %+v", first, second)
+	}
+	if second.Reason != "" || second.CitedDelta == nil {
+		t.Errorf("the same set of conditions is comparable: %+v", second)
+	}
+	if second.CitedDeltaText != "+50.0pt" {
+		t.Errorf("delta = %q, want +50.0pt", second.CitedDeltaText)
+	}
+}
+
+// The identity list is distinct and ordered by the identity fields, not by the order
+// the runs were read: two renders of one database have to agree.
+func TestTrendIdentitiesAreDistinctAndOrdered(t *testing.T) {
+	late := run(1, "openai", "m", "smoke", "Q01", false, "observed", "success", "2026-11-01T01:00:00Z")
+	late.ToolVersion = "0.2.0+norm3"
+	early := run(2, "openai", "m", "smoke", "Q02", false, "observed", "success", "2026-11-01T01:00:00Z")
+	early.ToolVersion = "0.1.0+norm1"
+	again := run(3, "openai", "m", "smoke", "Q03", false, "observed", "success", "2026-11-01T01:00:00Z")
+	again.ToolVersion = "0.2.0+norm3"
+
+	series, err := Trends([]sqlite.Run{late, early, again}, "weekly")
+	if err != nil {
+		t.Fatalf("Trends: %v", err)
+	}
+	identities := series[0].Points[0].Identities
+	if len(identities) != 2 {
+		t.Fatalf("identities = %v, want 2 distinct values", identities)
+	}
+	if identities[0].ToolVersion != "0.1.0+norm1" || identities[1].ToolVersion != "0.2.0+norm3" {
+		t.Errorf("identities must be sorted by the identity fields: %v", identities)
 	}
 }
 

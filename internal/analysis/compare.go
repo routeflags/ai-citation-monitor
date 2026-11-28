@@ -35,12 +35,25 @@ func (r CompareRow) NoteFor(lang i18n.Lang) string {
 	case "unmeasured":
 		return lang.Pick("not measured (one side has no runs)", "未測定（片方の期間に run が無い）")
 	case "conditions_differ":
-		return lang.Pick("conditions differ, so no delta (", "条件が違うため差を出さない（") + r.Detail + lang.Pick(")", "）")
+		return conditionsDifferNote(r.Detail, lang)
 	case "n_differs":
-		return lang.Pick("n differs (", "n が違う（") + r.Detail + lang.Pick(")", "）")
+		return nDiffersNote(r.Detail, lang)
 	default:
 		return ""
 	}
+}
+
+// conditionsDifferNote is the one wording for "the two sides are not the same
+// measurement", used by compare (two periods) and trends (two buckets), so the
+// reason code and the sentence cannot drift between the commands (D27).
+func conditionsDifferNote(detail string, lang i18n.Lang) string {
+	return lang.Pick("conditions differ, so no delta (", "条件が違うため差を出さない（") + detail + lang.Pick(")", "）")
+}
+
+// nDiffersNote is the one wording for "the delta survives, but the two sides are not
+// the same sample size".
+func nDiffersNote(detail string, lang i18n.Lang) string {
+	return lang.Pick("n differs (", "n が違う（") + detail + lang.Pick(")", "）")
 }
 
 // Compare aligns two periods on the group key. It refuses to subtract when the
@@ -148,14 +161,42 @@ func conditionMismatch(a, b []MeasurementIdentity) []string {
 	compare := func(label string, pick func(MeasurementIdentity) string) {
 		left := uniqueValues(a, pick)
 		right := uniqueValues(b, pick)
-		if strings.Join(left, ",") != strings.Join(right, ",") {
-			mismatches = append(mismatches, label+": "+strings.Join(left, ",")+" -> "+strings.Join(right, ","))
+		if !sameValues(left, right) {
+			mismatches = append(mismatches, label+": "+conditionValues(left)+" -> "+conditionValues(right))
 		}
 	}
 	compare("api_endpoint_version", func(v MeasurementIdentity) string { return v.EndpointVersion })
 	compare("question_set_sha256", func(v MeasurementIdentity) string { return v.QuestionSetSHA256 })
 	compare("tool_version", func(v MeasurementIdentity) string { return v.ToolVersion })
 	return mismatches
+}
+
+// sameValues compares two sorted value lists element by element. Joining them with a
+// separator would make ["a,b"] and ["a", "b"] compare equal.
+func sameValues(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+// conditionValues renders one side of a condition mismatch. A side that recorded no
+// value prints as the neutral mark, the same way MixedConditions prints an empty
+// value, so "tool_version: — -> 0.2.0" cannot be read as a broken line.
+func conditionValues(values []string) string {
+	if len(values) == 0 {
+		return "—"
+	}
+	rendered := make([]string, 0, len(values))
+	for _, value := range values {
+		rendered = append(rendered, conditionValue(value))
+	}
+	return strings.Join(rendered, ", ")
 }
 
 func uniqueValues(identities []MeasurementIdentity, pick func(MeasurementIdentity) string) []string {

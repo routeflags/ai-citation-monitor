@@ -295,6 +295,22 @@ func (h *harness) run(args ...string) (int, string, string) {
 	return code, out.String(), errOut.String()
 }
 
+// runAt executes one CLI invocation with a pinned clock, so a test can record runs in
+// two different trend buckets without waiting for time to pass.
+func (h *harness) runAt(now time.Time, args ...string) (int, string, string) {
+	h.t.Helper()
+	var out, errOut bytes.Buffer
+	app := &App{
+		ConfigPath: h.configPath,
+		Out:        &out,
+		Err:        &errOut,
+		In:         strings.NewReader(""),
+		Now:        func() time.Time { return now },
+	}
+	code := app.Run(append([]string{"--config", h.configPath}, args...))
+	return code, out.String(), errOut.String()
+}
+
 func (h *harness) importQuestions() {
 	h.t.Helper()
 	code, _, stderr := h.run("questions", "import", "--file", filepath.Join("testdata", "questions.yml"))
@@ -801,6 +817,76 @@ func TestCompetitorsListMarksExistingInvalidRows(t *testing.T) {
 	}
 }
 
+// A tool_version change in the middle of a period must not read as a change in the
+// citation rate: the bucket keeps its rate and n, the delta becomes the unmeasured
+// mark, and --json says why with compare's vocabulary (D27).
+func TestTrendsSuppressesADeltaWhenConditionsChange(t *testing.T) {
+	h := newHarness(t)
+	h.importQuestions()
+	for _, day := range []time.Time{
+		time.Date(2026, 11, 2, 3, 0, 0, 0, time.UTC), // ISO week 45
+		time.Date(2026, 11, 9, 3, 0, 0, 0, time.UTC), // ISO week 46
+	} {
+		if code, _, stderr := h.runAt(day, "run", "--provider", "openai", "--repeat", "1", "--yes"); code != ExitOK {
+			t.Fatalf("run at %s = %d: %s", day.Format("2006-01-02"), code, stderr)
+		}
+	}
+	// The second week was measured after an upgrade: same plan, new tool version.
+	update := h.query(`UPDATE runs SET tool_version = '9.9.9+norm3' WHERE started_at_utc LIKE '2026-11-09%'`)
+	update.exec()
+	update.close()
+
+	code, stdout, stderr := h.run("trends", "--interval", "weekly", "--json")
+	if code != ExitOK {
+		t.Fatalf("trends --json = %d: %s", code, stderr)
+	}
+	var got struct {
+		Series []struct {
+			Points []struct {
+				Bucket          string              `json:"bucket"`
+				Reason          string              `json:"reason"`
+				Detail          string              `json:"detail"`
+				CitedDelta      *float64            `json:"cited_delta"`
+				CitedDeltaText  string              `json:"cited_delta_text"`
+				Identities      []map[string]string `json:"identities"`
+				MixedConditions []string            `json:"mixed_conditions"`
+			} `json:"points"`
+		} `json:"series"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("decode trends JSON: %v\n%s", err, stdout)
+	}
+	if len(got.Series) != 1 || len(got.Series[0].Points) != 2 {
+		t.Fatalf("series = %+v, want one group with two buckets", got.Series)
+	}
+	point := got.Series[0].Points[1]
+	if point.Reason != "conditions_differ" {
+		t.Errorf("reason = %q, want conditions_differ: %+v", point.Reason, point)
+	}
+	if !strings.Contains(point.Detail, "tool_version: ") {
+		t.Errorf("detail = %q, want the field that differs", point.Detail)
+	}
+	if point.CitedDelta != nil || point.CitedDeltaText != "— (not measured)" {
+		t.Errorf("delta = %v / %q, want no delta", point.CitedDelta, point.CitedDeltaText)
+	}
+	if len(point.Identities) != 1 || point.Identities[0]["tool_version"] != "9.9.9+norm3" {
+		t.Errorf("identities = %+v, want the bucket's recorded identity", point.Identities)
+	}
+	if len(point.MixedConditions) != 0 {
+		t.Errorf("mixed_conditions = %v, want none: each bucket is one measurement", point.MixedConditions)
+	}
+
+	code, text, stderr := h.run("trends", "--interval", "weekly")
+	if code != ExitOK {
+		t.Fatalf("trends = %d: %s", code, stderr)
+	}
+	if !strings.Contains(text, "conditions differ, so no delta") {
+		t.Errorf("the table must carry the reason:\n%s", text)
+	}
+}
+
+// A competitor written as a URL in the config is still the site it names; before
+// the shared canonicaliser it became a row that never matched a citation host.
 func TestConfigCompetitorWrittenAsAURLIsMatched(t *testing.T) {
 	h := newHarness(t)
 	h.importQuestions()

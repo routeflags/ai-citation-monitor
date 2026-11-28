@@ -92,6 +92,43 @@ func TestBuildReportsAGroupThatMixesConditions(t *testing.T) {
 	}
 }
 
+// The trend table carries the same condition rule as compare: a bucket whose tool
+// version changed gets no delta and says why, in the report's language (D27).
+func TestBuildSaysWhyATrendBucketHasNoDelta(t *testing.T) {
+	first := sqlite.Run{
+		ID: 1, Provider: "openai", Model: "gpt-test", Stage: "smoke",
+		QuestionKey: "Q01", QuestionText: "THCVとは？", Category: "definition",
+		Status: "success", CitationObservability: "observed", CitedOwn: true,
+		StartedAtUTC: "2026-11-02T01:00:00Z", QuestionVersion: "sha:1",
+		APIEndpointVersion: "responses/v1", ToolVersion: "0.1.0+norm3",
+		MeasurementMethod: "official_api", SearchEnabled: true,
+	}
+	second := first
+	second.ID = 2
+	second.QuestionKey = "Q02"
+	second.StartedAtUTC = "2026-11-09T01:00:00Z"
+	second.ToolVersion = "0.2.0+norm3"
+	series, err := analysis.Trends([]sqlite.Run{first, second}, "weekly")
+	if err != nil {
+		t.Fatalf("Trends: %v", err)
+	}
+
+	for _, c := range []struct {
+		lang i18n.Lang
+		want string
+	}{
+		{i18n.EN, "conditions differ, so no delta (tool_version: 0.1.0+norm3 -> 0.2.0+norm3)"},
+		{i18n.JA, "条件が違うため差を出さない（tool_version: 0.1.0+norm3 -> 0.2.0+norm3）"},
+	} {
+		report := Build(sampleResult(t), Options{
+			Language: c.lang, Trends: series, Interval: "weekly", GeneratedAt: "2026-11-15T00:00:00Z",
+		})
+		if !strings.Contains(report, c.want) {
+			t.Errorf("%s report is missing %q:\n%s", c.lang, c.want, report)
+		}
+	}
+}
+
 func TestBuildStartsWithTheSampleStatement(t *testing.T) {
 	result := sampleResult(t)
 	en := Build(result, Options{Language: i18n.EN, GeneratedAt: "2026-11-15T00:00:00Z"})

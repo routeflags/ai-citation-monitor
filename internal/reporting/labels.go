@@ -105,7 +105,9 @@ var enLabels = labels{
 	delta: "delta", note: "note", noComparable: "— (no comparable runs)",
 	trendsH: "Trend",
 	trendsNote: "Buckets are JST days. Differences are in percentage points. The first bucket " +
-		"has nothing to compare with, so it says so.",
+		"has nothing to compare with, so it says so. When a bucket's measurement conditions " +
+		"differ from the previous bucket's, it gets no delta: a different tool version or " +
+		"question set is not a change in the site's visibility.",
 	bucket:  "bucket",
 	limitsH: "What this report does not say",
 	limits: []string{
@@ -187,7 +189,8 @@ var jaLabels = labels{
 	delta: "差", note: "注記", noComparable: "—（比較できる run が無い）",
 	trendsH: "トレンド",
 	trendsNote: "バケットの区切りは JST。差は percentage points。最初のバケットは比較相手が" +
-		"無いので「履歴不足」。",
+		"無いので「履歴不足」。計測条件が前のバケットと違う場合は差を出さない（期間比較と" +
+		"同じ規則）。",
 	bucket:  "バケット",
 	limitsH: "このレポートが書かないこと",
 	limits: []string{
